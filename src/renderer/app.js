@@ -1020,7 +1020,17 @@ async function processAudio(audioBlob, mode) {
             contents: [{
               parts: [
                 { inlineData: { mimeType: 'audio/webm', data: base64Audio } },
-                { text: `Transcribe this audio exactly. Language: ${settings.language || 'en'}. Return ONLY the transcribed text, nothing else.` }
+                { text: (() => {
+                    const style = getActiveStyle();
+                    const lang = (style.id === 'native' && style.language)
+                      ? (settings.nativeLanguage || style.language)
+                      : (settings.language || 'en');
+                    const langName = style.languageOptions?.find(l => l.code === lang)?.name || lang;
+                    if (style.id === 'native') {
+                      return `Transcribe this audio EXACTLY and FAITHFULLY in ${langName} (language code: ${lang}). Do NOT translate to English. Do NOT drop any words. Do NOT paraphrase. Return ONLY the transcribed text in the original spoken language, nothing else.`;
+                    }
+                    return `Transcribe this audio exactly. Language: ${lang}. Return ONLY the transcribed text, nothing else.`;
+                  })() }
               ]
             }]
           })
@@ -1147,7 +1157,13 @@ async function formatWithAI(rawText, mode) {
   } else {
     // Use style-specific prompt
     const stylePrompt = style.prompt || 'Clean up this dictation into polished text.';
-    prompt = `${stylePrompt}${dictInstructions}\n\nRaw transcript: "${rawText}"\n\nReturn ONLY the formatted text, nothing else.`;
+    let langNote = '';
+    if (style.id === 'native') {
+      const lang = settings.nativeLanguage || style.language || 'fa';
+      const langName = style.languageOptions?.find(l => l.code === lang)?.name || lang;
+      langNote = `\nIMPORTANT: The text is in ${langName}. Keep it in that language. Do NOT translate to English or any other language.`;
+    }
+    prompt = `${stylePrompt}${langNote}${dictInstructions}\n\nRaw transcript: "${rawText}"\n\nReturn ONLY the formatted text, nothing else.`;
   }
 
   try {
@@ -1338,7 +1354,7 @@ function renderStyleGrid() {
   if (!grid) return;
   const styles = window.BUILT_IN_STYLES || [];
 
-  grid.innerHTML = styles.map(s => `
+  let html = styles.map(s => `
     <div class="style-chip ${s.id === activeStyleId ? 'active' : ''}" onclick="selectStyle('${s.id}')">
       <span class="style-chip-icon">${s.icon}</span>
       <span class="style-chip-name">${s.name}</span>
@@ -1346,10 +1362,33 @@ function renderStyleGrid() {
     </div>
   `).join('');
 
+  // Add native language picker when native style is active
+  const active = getActiveStyle();
+  if (active.id === 'native' && active.languageOptions) {
+    const currentLang = settings.nativeLanguage || active.language || 'fa';
+    html += `
+      <div class="native-lang-picker" style="grid-column: 1 / -1; margin-top: var(--space-sm);">
+        <label class="text-sm text-secondary" style="margin-bottom: 6px; display: block;">🌐 Transcription language:</label>
+        <select id="nativeLangSelect" class="select-input" onchange="setNativeLanguage(this.value)">
+          ${active.languageOptions.map(l => `<option value="${l.code}" ${l.code === currentLang ? 'selected' : ''}>${l.name}</option>`).join('')}
+        </select>
+      </div>
+    `;
+  }
+
+  grid.innerHTML = html;
+
   // Update badge
   const badge = document.getElementById('activeStyleBadge');
-  const active = getActiveStyle();
-  if (badge) badge.textContent = `${active.icon} ${active.name}`;
+  if (badge) {
+    if (active.id === 'native') {
+      const lang = settings.nativeLanguage || active.language || 'fa';
+      const langName = active.languageOptions?.find(l => l.code === lang)?.name || lang;
+      badge.textContent = `${active.icon} ${langName}`;
+    } else {
+      badge.textContent = `${active.icon} ${active.name}`;
+    }
+  }
 
   // Update auto label
   const autoLabel = document.getElementById('styleAutoLabel');
@@ -1549,7 +1588,18 @@ window.removeWord = removeWord;
 window.removeSnippet = removeSnippet;
 window.editSnippet = editSnippet;
 window.selectModel = selectModel;
+async function setNativeLanguage(langCode) {
+  await saveSetting('nativeLanguage', langCode);
+  // Also update the style's runtime language for current session
+  const style = getActiveStyle();
+  if (style.id === 'native') style.language = langCode;
+  renderStyleGrid();
+  const langName = style.languageOptions?.find(l => l.code === langCode)?.name || langCode;
+  showToast(`Language: ${langName}`, 'success');
+}
+
 window.selectStyle = selectStyle;
+window.setNativeLanguage = setNativeLanguage;
 window.copyHistoryItem = copyHistoryItem;
 window.retryFailedRecording = retryFailedRecording;
 window.deleteFailedRecording = deleteFailedRecording;
