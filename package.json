@@ -1,6 +1,6 @@
 {
   "name": "dictaloom",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Dictaloom - free, open-source AI voice dictation for Windows. Speak naturally, get polished text anywhere.",
   "main": "src/main/main.js",
   "license": "MIT",

@@ -1027,7 +1027,7 @@ async function processAudio(audioBlob, mode) {
                       : (settings.language || 'en');
                     const langName = style.languageOptions?.find(l => l.code === lang)?.name || lang;
                     if (style.id === 'native') {
-                      return `Transcribe this audio EXACTLY and FAITHFULLY in ${langName} (language code: ${lang}). Do NOT translate to English. Do NOT drop any words. Do NOT paraphrase. Return ONLY the transcribed text in the original spoken language, nothing else.`;
+                      return `The user is speaking in ${langName}. Transcribe their speech and translate it into fluent, natural English. Do NOT drop any meaning. Do NOT summarize. Preserve every idea and detail. Return ONLY the English translation, nothing else.`;
                     }
                     return `Transcribe this audio exactly. Language: ${lang}. Return ONLY the transcribed text, nothing else.`;
                   })() }
@@ -1159,9 +1159,7 @@ async function formatWithAI(rawText, mode) {
     const stylePrompt = style.prompt || 'Clean up this dictation into polished text.';
     let langNote = '';
     if (style.id === 'native') {
-      const lang = settings.nativeLanguage || style.language || 'fa';
-      const langName = style.languageOptions?.find(l => l.code === lang)?.name || lang;
-      langNote = `\nIMPORTANT: The text is in ${langName}. Keep it in that language. Do NOT translate to English or any other language.`;
+      langNote = '\nIMPORTANT: The output must be in English. Ensure natural, fluent English text.';
     }
     prompt = `${stylePrompt}${langNote}${dictInstructions}\n\nRaw transcript: "${rawText}"\n\nReturn ONLY the formatted text, nothing else.`;
   }

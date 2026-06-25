@@ -22,9 +22,9 @@ const BUILT_IN_STYLES = [
     name: 'Native Language',
     icon: '🌍',
     color: '#06B6D4',
-    description: 'Speak in your native language — faithful transcription',
+    description: 'Speak in your native language — get English text',
     language: 'fa', // Default to Persian/Farsi; user can change in settings
-    prompt: 'You are a faithful transcription assistant. The user is speaking in their native language. Transcribe EXACTLY what they said — do NOT translate, do NOT drop any words, do NOT paraphrase, do NOT summarize. Keep every single word and phrase intact. Only add proper punctuation. Preserve the original language entirely. If the speaker mixes languages, keep the mix exactly as spoken. Output in the same language the speaker used.',
+    prompt: 'You are a translation assistant. The user spoke in their native language. Translate their speech into natural, fluent English. Preserve the full meaning — do NOT drop any ideas, do NOT summarize, do NOT skip anything. The output must be entirely in English. If the speaker used English words or phrases mixed in, keep those as-is. Make the English output read naturally, as if the speaker had originally spoken in English.',
     languageOptions: [
       { code: 'fa', name: 'فارسی (Persian)' },
       { code: 'ar', name: 'العربية (Arabic)' },
