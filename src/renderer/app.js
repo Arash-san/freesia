@@ -1167,7 +1167,10 @@ async function processAudio(audioBlob, mode) {
       }
 
       if (mode === 'dictate-inject' || mode === 'command') {
-        await api.injectText(finalText);
+        const injected = await api.injectText(finalText);
+        if (injected === false) {
+          showToast('Couldn\'t type into the app — text is in your clipboard, press Ctrl+V', 'error');
+        }
       }
 
       const wordCount = finalText.split(/\s+/).filter(Boolean).length;

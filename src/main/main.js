@@ -522,19 +522,24 @@ async function injectText(text) {
   try {
     const { exec } = require('child_process');
     await new Promise((resolve, reject) => {
-      exec('powershell -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait(\'^v\')"',
-        { windowsHide: true },
+      exec('powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait(\'^v\')"',
+        { windowsHide: true, timeout: 8000 },
         (err) => { if (err) reject(err); else resolve(); }
       );
     });
+    writeLog('INFO', 'inject', `Pasted ${text.length} chars into the foreground app`);
   } catch (e) {
-    console.error('Failed to inject text:', e);
+    // Do NOT restore the old clipboard on failure: leave the transcript
+    // there so the user can paste it manually with Ctrl+V.
+    writeLog('ERROR', 'inject', `Paste failed, transcript left in clipboard: ${e.message}`, e.stack);
+    return false;
   }
 
   // Restore clipboard after a short delay
   setTimeout(() => {
     clipboard.writeText(savedClipboard || '');
   }, 500);
+  return true;
 }
 
 // IPC Handlers
@@ -561,8 +566,7 @@ ipcMain.handle('get-foreground-app', async () => {
 });
 
 ipcMain.handle('inject-text', async (_, text) => {
-  await injectText(text);
-  return true;
+  return await injectText(text);
 });
 
 ipcMain.handle('copy-text', (_, text) => {

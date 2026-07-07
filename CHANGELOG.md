@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.1
+
+- Text injection failures are no longer silent: they are written to the log file, the transcript is left in the clipboard so it can be pasted manually with Ctrl+V, and a toast explains what happened.
+- Added a timeout to the paste helper so a hung PowerShell can no longer stall dictation.
+
 ## 2.0.0 - Freesia
 
 - Renamed the project from Dictaloom to Freesia across the app, package metadata, documentation, release publishing config, and GitHub repository target. Settings, dictionary, snippets, history, and saved recordings are migrated automatically from existing Dictaloom installs on first launch.
