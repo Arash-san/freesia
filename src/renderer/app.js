@@ -1,8 +1,8 @@
 // ============================================
-// Dictaloom - Main Application Logic
+// Freesia - Main Application Logic
 // ============================================
 
-const api = window.dictaloom;
+const api = window.freesia;
 
 // ============================================
 // State
@@ -116,6 +116,11 @@ function getRecordingDuration() {
   const min = Math.floor(elapsed / 60);
   const sec = elapsed % 60;
   return `${min}:${sec.toString().padStart(2, '0')}`;
+}
+
+function getRecordingSeconds() {
+  if (!recordingStartTime) return 0;
+  return Math.max(0, Math.round((Date.now() - recordingStartTime) / 1000));
 }
 
 function hideRecordingTimer() {
@@ -243,7 +248,7 @@ function bindEvents() {
   document.getElementById('toggleKeepRecordings')?.addEventListener('change', (e) => saveSetting('keepSuccessRecordings', e.target.checked));
   document.getElementById('toggleOverlay')?.addEventListener('change', (e) => saveSetting('showOverlay', e.target.checked));
   document.getElementById('toggleSounds')?.addEventListener('change', (e) => saveSetting('sounds', e.target.checked));
-  document.getElementById('btnGitHub')?.addEventListener('click', () => api.openExternal('https://github.com/arash-san/dictaloom'));
+  document.getElementById('btnGitHub')?.addEventListener('click', () => api.openExternal('https://github.com/arash-san/freesia'));
   document.getElementById('btnCheckUpdates')?.addEventListener('click', checkForUpdates);
   document.getElementById('btnDownloadUpdate')?.addEventListener('click', downloadUpdate);
   document.getElementById('btnInstallUpdate')?.addEventListener('click', installUpdate);
@@ -363,7 +368,7 @@ async function finishOnboarding() {
   await saveSetting('onboarded', true);
   settings.onboarded = true;
   showPage('pageMain');
-  showToast('Welcome to Dictaloom! 🎤', 'success');
+  showToast('Welcome to Freesia! 🌸', 'success');
 }
 
 // ============================================
@@ -671,30 +676,116 @@ async function installUpdate() {
 // ============================================
 // Dashboard Stats
 // ============================================
-function updateDashboardStats() {
-  const stats = settings.stats || { wordsToday: 0, timeSaved: 0, sessions: 0 };
-  const today = new Date().toISOString().split('T')[0];
-  if (stats.lastDate !== today) {
-    stats.wordsToday = 0;
-    stats.sessions = 0;
-    stats.timeSaved = 0;
-    stats.lastDate = today;
-    saveSetting('stats', stats);
-  }
-  const wEl = document.getElementById('statWords');
-  if (wEl) wEl.textContent = stats.wordsToday.toLocaleString();
-  const tEl = document.getElementById('statTime');
-  if (tEl) tEl.textContent = stats.timeSaved + 'm';
-  const sEl = document.getElementById('statSessions');
-  if (sEl) sEl.textContent = stats.sessions;
+// Average typing speed used to estimate saved time. Speaking runs at
+// 130+ WPM, so time saved = estimated typing time - actual speaking time.
+const TYPING_WPM = 40;
+
+function localDateString(d = new Date()) {
+  // Local calendar date, not UTC — the old toISOString() version rolled
+  // the "day" over at UTC midnight, resetting stats mid-evening in the US.
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
-async function incrementStats(wordCount) {
-  const stats = settings.stats || { wordsToday: 0, timeSaved: 0, sessions: 0, lastDate: '' };
-  stats.wordsToday += wordCount;
-  stats.sessions += 1;
-  stats.timeSaved += Math.round(wordCount / 40); // ~40 WPM typing vs instant
-  stats.lastDate = new Date().toISOString().split('T')[0];
+function emptyDayStats(date) {
+  return { date, words: 0, sessions: 0, recordSec: 0, savedSec: 0 };
+}
+
+function normalizeStats(raw) {
+  const today = localDateString();
+  // Fresh install
+  if (!raw) {
+    return {
+      today: emptyDayStats(today),
+      lifetime: { words: 0, sessions: 0, recordSec: 0, savedSec: 0 },
+      streak: { current: 0, best: 0, lastDate: '' }
+    };
+  }
+  // Migrate the legacy flat shape { wordsToday, timeSaved, sessions, lastDate }
+  if (raw.wordsToday !== undefined || !raw.lifetime) {
+    const words = raw.wordsToday || 0;
+    const sessions = raw.sessions || 0;
+    const savedSec = (raw.timeSaved || 0) * 60;
+    const isToday = raw.lastDate === today;
+    return {
+      today: isToday
+        ? { date: today, words, sessions, recordSec: 0, savedSec }
+        : emptyDayStats(today),
+      // Seed lifetime with whatever the legacy counters held so the
+      // user doesn't start back at zero.
+      lifetime: { words, sessions, recordSec: 0, savedSec },
+      streak: { current: raw.lastDate ? 1 : 0, best: raw.lastDate ? 1 : 0, lastDate: raw.lastDate || '' }
+    };
+  }
+  // Current shape: roll the day over without touching lifetime or streak
+  if (raw.today?.date !== today) {
+    raw.today = emptyDayStats(today);
+  }
+  return raw;
+}
+
+function formatDuration(totalSec) {
+  const sec = Math.max(0, Math.round(totalSec));
+  if (sec < 60) return `${sec}s`;
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function updateDashboardStats() {
+  const stats = normalizeStats(settings.stats);
+  settings.stats = stats;
+  saveSetting('stats', stats);
+
+  const set = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+  };
+
+  set('statWords', stats.today.words.toLocaleString());
+  set('statTime', formatDuration(stats.today.savedSec));
+  set('statSessions', String(stats.today.sessions));
+  set('statStreak', String(stats.streak.current));
+
+  set('statWordsAll', stats.lifetime.words.toLocaleString());
+  set('statTimeAll', formatDuration(stats.lifetime.savedSec));
+  set('statSessionsAll', String(stats.lifetime.sessions));
+  const avg = stats.lifetime.sessions > 0
+    ? Math.round(stats.lifetime.words / stats.lifetime.sessions)
+    : 0;
+  set('statAvg', String(avg));
+}
+
+async function incrementStats(wordCount, recordSeconds = 0) {
+  const stats = normalizeStats(settings.stats);
+  const today = localDateString();
+
+  // Exact seconds, no per-session rounding: a 15-word dictation used to
+  // contribute Math.round(15/40) = 0 minutes forever.
+  const typingSec = (wordCount / TYPING_WPM) * 60;
+  const savedSec = Math.max(0, typingSec - recordSeconds);
+
+  stats.today.words += wordCount;
+  stats.today.sessions += 1;
+  stats.today.recordSec += recordSeconds;
+  stats.today.savedSec += savedSec;
+
+  stats.lifetime.words += wordCount;
+  stats.lifetime.sessions += 1;
+  stats.lifetime.recordSec += recordSeconds;
+  stats.lifetime.savedSec += savedSec;
+
+  // Streak: consecutive calendar days with at least one dictation
+  if (stats.streak.lastDate !== today) {
+    const yesterday = localDateString(new Date(Date.now() - 86400000));
+    stats.streak.current = stats.streak.lastDate === yesterday ? stats.streak.current + 1 : 1;
+    stats.streak.best = Math.max(stats.streak.best, stats.streak.current);
+    stats.streak.lastDate = today;
+  }
+
   await saveSetting('stats', stats);
   settings.stats = stats;
   updateDashboardStats();
@@ -936,6 +1027,10 @@ async function startRecording() {
     logError('startRecording', e);
     showToast('Microphone access denied', 'error');
     hideRecordingTimer();
+    isRecording = false;
+    // Tell the main process the recording never started so the global
+    // shortcut state machine doesn't get stuck in "recording".
+    api.recordingFailed?.();
   }
 }
 
@@ -1057,9 +1152,14 @@ async function processAudio(audioBlob, mode) {
 
       let finalText = rawText;
       if (settings.aiFormatting !== false) {
+        // Snippet expansion is handled inside the AI prompt so the model
+        // can judge intent (deliberate sign-off vs. casual "thank you").
         finalText = await formatWithAI(rawText, mode);
+      } else {
+        // No AI available: conservative word-boundary expansion on the
+        // raw transcript only.
+        finalText = expandSnippets(finalText);
       }
-      finalText = expandSnippets(finalText);
 
       if (outputEl) {
         outputEl.innerHTML = `<span class="transcribed-text">${escapeHtml(finalText)}</span>`;
@@ -1070,8 +1170,8 @@ async function processAudio(audioBlob, mode) {
         await api.injectText(finalText);
       }
 
-      const wordCount = finalText.split(/\s+/).length;
-      await incrementStats(wordCount);
+      const wordCount = finalText.split(/\s+/).filter(Boolean).length;
+      await incrementStats(wordCount, getRecordingSeconds());
       await addToHistory(finalText, mode);
 
       // ── SUCCESS: Delete or keep the safety-saved file based on setting ──
@@ -1141,6 +1241,20 @@ async function processAudio(audioBlob, mode) {
   hideRecordingTimer();
 }
 
+function buildSnippetInstructions() {
+  const snippets = settings.snippets || [];
+  if (snippets.length === 0) return '';
+  const list = snippets
+    .map(s => `- Trigger: "${s.trigger}" -> Expansion: "${s.expansion}"`)
+    .join('\n');
+  return `\n\nThe user has personal text snippets (voice shortcuts):\n${list}\n` +
+    `Snippet rules — follow them strictly:\n` +
+    `1. Apply an expansion ONLY when the speaker deliberately dictated the trigger phrase as a shortcut, for example explicitly closing a formal message with a sign-off trigger.\n` +
+    `2. If similar words occur naturally in speech (a casual "thank you", mentioning the phrase in passing, or talking ABOUT the snippet), leave the words exactly as spoken and do NOT expand.\n` +
+    `3. Never apply an expansion because YOUR formatting introduced words resembling a trigger. Expansions may only be justified by the speaker's own words.\n` +
+    `4. When in doubt, do not expand.`;
+}
+
 async function formatWithAI(rawText, mode) {
   const dictWords = (settings.dictionary || []).join(', ');
   const dictInstructions = dictWords ? `\nPreserve these custom words exactly: ${dictWords}` : '';
@@ -1150,6 +1264,9 @@ async function formatWithAI(rawText, mode) {
 
   // If verbatim style (no AI formatting), return raw text
   if (style.id === 'verbatim' && mode !== 'command') return rawText;
+
+  const snippetInstructions = buildSnippetInstructions();
+  const noInventions = '\nDo NOT invent content the speaker did not say: no added greetings, no added sign-offs, no added names or signatures unless the speaker dictated them or deliberately used a snippet trigger.';
 
   let prompt;
   if (mode === 'command') {
@@ -1161,7 +1278,7 @@ async function formatWithAI(rawText, mode) {
     if (style.id === 'native') {
       langNote = '\nIMPORTANT: The output must be in English. Ensure natural, fluent English text.';
     }
-    prompt = `${stylePrompt}${langNote}${dictInstructions}\n\nRaw transcript: "${rawText}"\n\nReturn ONLY the formatted text, nothing else.`;
+    prompt = `${stylePrompt}${langNote}${noInventions}${dictInstructions}${snippetInstructions}\n\nRaw transcript: "${rawText}"\n\nReturn ONLY the formatted text, nothing else.`;
   }
 
   try {
@@ -1189,10 +1306,14 @@ async function formatWithAI(rawText, mode) {
 }
 
 function expandSnippets(text) {
+  // Fallback path (AI formatting disabled). Word-boundary match so a
+  // trigger like "regards" can no longer fire from inside other words,
+  // and each trigger expands at most once per dictation.
   const snippets = settings.snippets || [];
   let result = text;
   for (const s of snippets) {
-    const regex = new RegExp(s.trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    const escaped = s.trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`\\b${escaped}\\b`, 'i');
     result = result.replace(regex, s.expansion);
   }
   return result;
@@ -1202,18 +1323,17 @@ function expandSnippets(text) {
 // Waveform Visualization
 // ============================================
 function drawWaveform() {
-  const canvas = document.getElementById('waveformCanvas');
-  if (!canvas || !analyser) return;
-  const ctx = canvas.getContext('2d');
+  const canvases = [
+    document.getElementById('waveformCanvas'),
+    document.getElementById('waveformCanvasMirror')
+  ].filter(Boolean);
+  if (canvases.length === 0 || !analyser) return;
   const bufferLength = analyser.frequencyBinCount;
   const dataArray = new Uint8Array(bufferLength);
   const barCount = 32;
-  const barWidth = canvas.width / barCount - 2;
 
-  function draw() {
-    animFrameId = requestAnimationFrame(draw);
-    analyser.getByteFrequencyData(dataArray);
-
+  function paint(canvas, mirrored) {
+    const ctx = canvas.getContext('2d');
     // Resize canvas dynamically to fit container and prevent overflow
     const container = canvas.parentElement;
     if (container) {
@@ -1227,20 +1347,29 @@ function drawWaveform() {
     const dynamicBarWidth = canvas.width / barCount - 2;
 
     for (let i = 0; i < barCount; i++) {
-      const dataIndex = Math.floor(i * bufferLength / barCount);
+      // Mirror so the loudest bars hug the mic button on both sides
+      const barIndex = mirrored ? barCount - 1 - i : i;
+      const dataIndex = Math.floor(barIndex * bufferLength / barCount);
       const value = dataArray[dataIndex] / 255;
       const barHeight = Math.max(3, value * canvas.height * 0.9);
       const x = i * (dynamicBarWidth + 2);
       const y = (canvas.height - barHeight) / 2;
 
       const gradient = ctx.createLinearGradient(x, y, x, y + barHeight);
-      gradient.addColorStop(0, 'rgba(0, 212, 170, 0.9)');
-      gradient.addColorStop(1, 'rgba(124, 92, 252, 0.6)');
+      gradient.addColorStop(0, 'rgba(167, 139, 250, 0.9)');
+      gradient.addColorStop(1, 'rgba(244, 114, 182, 0.6)');
       ctx.fillStyle = gradient;
       ctx.beginPath();
       ctx.roundRect(x, y, dynamicBarWidth, barHeight, 2);
       ctx.fill();
     }
+  }
+
+  function draw() {
+    animFrameId = requestAnimationFrame(draw);
+    analyser.getByteFrequencyData(dataArray);
+    paint(canvases[0], true);
+    if (canvases[1]) paint(canvases[1], false);
   }
   draw();
 }

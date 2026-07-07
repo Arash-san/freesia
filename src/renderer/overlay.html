@@ -2,52 +2,67 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Dictaloom Overlay</title>
+  <title>Freesia Overlay</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --overlay-bg: rgba(22, 16, 30, 0.90);
+      --overlay-border: rgba(255, 255, 255, 0.10);
+      --overlay-text: #A79FB8;
+      --violet: #A78BFA;
+      --pink: #F472B6;
+      --success: #34D399;
+      --error: #FB7185;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --overlay-bg: rgba(255, 255, 255, 0.92);
+        --overlay-border: rgba(42, 33, 53, 0.12);
+        --overlay-text: #6E6478;
+        --violet: #8B5CF6;
+        --pink: #EC4899;
+        --success: #10B981;
+        --error: #E11D48;
+      }
+    }
     body {
       background: transparent;
-      font-family: 'Inter', sans-serif;
+      font-family: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, sans-serif;
       overflow: hidden;
       -webkit-app-region: drag;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
     }
     .overlay {
-      min-width: 180px;
+      min-width: 190px;
       width: fit-content;
-      padding: 14px 20px;
-      border-radius: 40px;
-      background: rgba(6, 10, 20, 0.88);
+      padding: 14px 22px;
+      border-radius: 999px;
+      background: var(--overlay-bg);
       backdrop-filter: blur(24px);
       -webkit-backdrop-filter: blur(24px);
-      border: 1px solid rgba(255,255,255,0.08);
+      border: 1px solid var(--overlay-border);
       display: flex;
       align-items: center;
       gap: 12px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
       transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    .overlay.idle {
-      animation: breathe 3s ease-in-out infinite;
-    }
     .overlay.listening {
-      border-color: rgba(0, 212, 170, 0.3);
-      box-shadow: 0 0 25px rgba(0, 212, 170, 0.2), 0 8px 32px rgba(0,0,0,0.5);
+      border-color: rgba(167, 139, 250, 0.45);
+      box-shadow: 0 0 26px rgba(167, 139, 250, 0.30), 0 8px 32px rgba(0, 0, 0, 0.35);
     }
-    .overlay.processing {
-      border-color: rgba(124, 92, 252, 0.3);
-    }
-    .overlay.done {
-      border-color: rgba(0, 232, 143, 0.4);
-    }
+    .overlay.processing { border-color: rgba(244, 114, 182, 0.45); }
+    .overlay.done { border-color: rgba(52, 211, 153, 0.5); }
     .overlay.error {
-      border-color: rgba(255, 107, 107, 0.4);
+      border-color: rgba(251, 113, 133, 0.5);
       animation: shake 0.5s ease;
     }
 
     .indicator {
-      width: 28px;
-      height: 28px;
+      width: 26px; height: 26px;
       border-radius: 50%;
       display: flex;
       align-items: center;
@@ -55,153 +70,110 @@
       position: relative;
       flex-shrink: 0;
     }
-
-    /* Idle state */
-    .overlay.idle .indicator {
-      background: rgba(0, 212, 170, 0.15);
-    }
-    .indicator .dot {
-      width: 10px;
-      height: 10px;
+    .dot {
+      width: 11px; height: 11px;
       border-radius: 50%;
-      background: #00d4aa;
+      background: linear-gradient(135deg, var(--violet), var(--pink));
       transition: all 0.3s ease;
     }
-
-    /* Listening - pulsing rings */
-    .overlay.listening .indicator {
-      background: rgba(0, 212, 170, 0.2);
-    }
-    .overlay.listening .dot {
-      background: #00d4aa;
-      animation: micPulse 1s ease-in-out infinite;
-    }
+    .overlay.listening .dot { animation: micPulse 1s ease-in-out infinite; }
     .pulse-ring {
       position: absolute;
-      inset: -4px;
+      inset: -3px;
       border-radius: 50%;
-      border: 2px solid rgba(0, 212, 170, 0.4);
+      border: 2px solid rgba(167, 139, 250, 0.5);
       opacity: 0;
     }
-    .overlay.listening .pulse-ring {
-      animation: pulseRing 1.5s ease-out infinite;
-    }
-    .overlay.listening .pulse-ring:nth-child(2) {
-      animation-delay: 0.5s;
-    }
+    .overlay.listening .pulse-ring { animation: pulseRing 1.5s ease-out infinite; }
+    .overlay.listening .pulse-ring:nth-child(2) { animation-delay: 0.5s; }
 
-    /* Processing - spinning */
-    .overlay.processing .indicator {
-      background: transparent;
-      border: 2px solid rgba(124, 92, 252, 0.2);
-      animation: morphLoader 2s ease-in-out infinite;
-    }
     .overlay.processing .indicator::after {
       content: '';
       position: absolute;
-      inset: -2px;
+      inset: -1px;
       border-radius: 50%;
       border: 2px solid transparent;
-      border-top-color: #7c5cfc;
+      border-top-color: var(--pink);
       animation: spinArc 0.8s linear infinite;
     }
-    .overlay.processing .dot { background: #7c5cfc; }
-
-    /* Done - checkmark */
-    .overlay.done .indicator {
-      background: rgba(0, 232, 143, 0.2);
-    }
-    .overlay.done .dot {
-      background: #00e88f;
-    }
-
-    /* Error */
-    .overlay.error .indicator {
-      background: rgba(255, 107, 107, 0.2);
-    }
-    .overlay.error .dot {
-      background: #ff6b6b;
-    }
+    .overlay.done .dot { background: var(--success); }
+    .overlay.error .dot { background: var(--error); }
 
     .status-text {
-      font-size: 12px;
-      font-weight: 600;
-      color: #8892a8;
+      font-size: 12.5px;
+      font-weight: 650;
+      color: var(--overlay-text);
       white-space: nowrap;
       transition: color 0.3s ease;
     }
-    .overlay.listening .status-text { color: #00d4aa; }
-    .overlay.processing .status-text { color: #7c5cfc; }
-    .overlay.done .status-text { color: #00e88f; }
-    .overlay.error .status-text { color: #ff6b6b; }
+    .overlay.listening .status-text { color: var(--violet); }
+    .overlay.processing .status-text { color: var(--pink); }
+    .overlay.done .status-text { color: var(--success); }
+    .overlay.error .status-text { color: var(--error); }
 
-    /* Mini waveform */
+    .timer-text {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--pink);
+      font-variant-numeric: tabular-nums;
+    }
+
     .mini-wave {
       display: flex;
       align-items: center;
-      gap: 2px;
+      gap: 2.5px;
       height: 20px;
     }
     .mini-wave .bar {
       width: 3px;
       height: 4px;
-      background: #00d4aa;
+      background: linear-gradient(180deg, var(--violet), var(--pink));
       border-radius: 2px;
       transition: height 0.1s ease;
     }
-    .overlay.listening .mini-wave .bar {
-      animation: waveBar 0.8s ease-in-out infinite;
-    }
+    .overlay.listening .mini-wave .bar { animation: waveBar 0.8s ease-in-out infinite; }
     .overlay.listening .mini-wave .bar:nth-child(1) { animation-delay: 0s; }
-    .overlay.listening .mini-wave .bar:nth-child(2) { animation-delay: 0.1s; }
-    .overlay.listening .mini-wave .bar:nth-child(3) { animation-delay: 0.2s; }
-    .overlay.listening .mini-wave .bar:nth-child(4) { animation-delay: 0.3s; }
-    .overlay.listening .mini-wave .bar:nth-child(5) { animation-delay: 0.15s; }
+    .overlay.listening .mini-wave .bar:nth-child(2) { animation-delay: 0.12s; }
+    .overlay.listening .mini-wave .bar:nth-child(3) { animation-delay: 0.24s; }
+    .overlay.listening .mini-wave .bar:nth-child(4) { animation-delay: 0.36s; }
+    .overlay.listening .mini-wave .bar:nth-child(5) { animation-delay: 0.18s; }
+    .overlay.listening .mini-wave .bar:nth-child(6) { animation-delay: 0.3s; }
+    .overlay.listening .mini-wave .bar:nth-child(7) { animation-delay: 0.06s; }
 
-    @keyframes breathe {
-      0%, 100% { box-shadow: 0 0 15px rgba(0,212,170,0.1), 0 8px 32px rgba(0,0,0,0.5); }
-      50% { box-shadow: 0 0 25px rgba(0,212,170,0.2), 0 8px 32px rgba(0,0,0,0.5); }
-    }
     @keyframes pulseRing {
-      0% { transform: scale(1); opacity: 0.6; }
-      100% { transform: scale(2.2); opacity: 0; }
+      0%   { transform: scale(1); opacity: 0.6; }
+      100% { transform: scale(2.1); opacity: 0; }
     }
     @keyframes micPulse {
       0%, 100% { transform: scale(1); }
-      50% { transform: scale(1.2); }
-    }
-    @keyframes morphLoader {
-      0% { border-radius: 50%; }
-      25% { border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%; }
-      50% { border-radius: 50%; }
-      75% { border-radius: 70% 30% 30% 70% / 70% 70% 30% 30%; }
-      100% { border-radius: 50%; }
+      50%      { transform: scale(1.25); }
     }
     @keyframes spinArc {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
+      to { transform: rotate(360deg); }
     }
     @keyframes waveBar {
       0%, 100% { height: 4px; }
-      50% { height: 18px; }
+      50%      { height: 17px; }
     }
     @keyframes shake {
       0%, 100% { transform: translateX(0); }
-      10%, 30%, 50%, 70%, 90% { transform: translateX(-3px); }
-      20%, 40%, 60%, 80% { transform: translateX(3px); }
+      20%, 60% { transform: translateX(-3px); }
+      40%, 80% { transform: translateX(3px); }
     }
   </style>
 </head>
 <body>
-  <div class="overlay idle" id="overlay">
+  <div class="overlay listening" id="overlay">
     <div class="indicator">
       <div class="pulse-ring"></div>
       <div class="pulse-ring"></div>
       <div class="dot"></div>
     </div>
-    <span class="status-text" id="statusText">Ready</span>
-    <span class="timer-text" id="timerText" style="display:none; font-size:12px; font-weight:700; color:#ff6b6b; font-variant-numeric:tabular-nums;"></span>
+    <span class="status-text" id="statusText">Listening</span>
+    <span class="timer-text" id="timerText" style="display:none;"></span>
     <div class="mini-wave">
+      <div class="bar"></div>
+      <div class="bar"></div>
       <div class="bar"></div>
       <div class="bar"></div>
       <div class="bar"></div>
@@ -214,10 +186,10 @@
     const overlay = document.getElementById('overlay');
     const statusText = document.getElementById('statusText');
     const timerText = document.getElementById('timerText');
-    const states = { idle: 'Ready', listening: 'Listening...', processing: 'Processing...', done: 'Done!', error: 'Error' };
+    const states = { idle: 'Ready', listening: 'Listening', processing: 'Processing', done: 'Done!', error: 'Error' };
 
-    if (window.dictaloom) {
-      window.dictaloom.onOverlayState((state) => {
+    if (window.freesia) {
+      window.freesia.onOverlayState((state) => {
         overlay.className = 'overlay ' + state;
         statusText.textContent = states[state] || 'Ready';
         // Show timer only while listening
@@ -229,8 +201,8 @@
         }
       });
 
-      if (window.dictaloom.onOverlayTimer) {
-        window.dictaloom.onOverlayTimer((timeStr) => {
+      if (window.freesia.onOverlayTimer) {
+        window.freesia.onOverlayTimer((timeStr) => {
           if (timerText) {
             timerText.textContent = timeStr;
             timerText.style.display = '';

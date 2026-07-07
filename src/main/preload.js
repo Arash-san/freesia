@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('dictaloom', {
+contextBridge.exposeInMainWorld('freesia', {
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),
   setSetting: (key, value) => ipcRenderer.invoke('set-setting', key, value),
@@ -19,6 +19,9 @@ contextBridge.exposeInMainWorld('dictaloom', {
   overlayError: () => ipcRenderer.invoke('overlay-error'),
   overlayHide: () => ipcRenderer.invoke('overlay-hide'),
   overlayTimer: (timeStr) => ipcRenderer.invoke('overlay-timer', timeStr),
+
+  // Recording state sync
+  recordingFailed: () => ipcRenderer.invoke('recording-failed'),
 
   // External links
   openExternal: (url) => ipcRenderer.invoke('open-external', url),

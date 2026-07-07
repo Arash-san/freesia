@@ -1,5 +1,5 @@
 // ============================================
-// Dictaloom - Dictation Styles & App Mappings
+// Freesia - Dictation Styles & App Mappings
 // ============================================
 
 // Simple Icons CDN base URL

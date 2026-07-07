@@ -1,18 +1,18 @@
 {
-  "name": "dictaloom",
-  "version": "1.2.1",
-  "description": "Dictaloom - free, open-source AI voice dictation for Windows. Speak naturally, get polished text anywhere.",
+  "name": "freesia",
+  "version": "2.0.0",
+  "description": "Freesia - free, open-source AI voice dictation for Windows. Speak freely. Write beautifully.",
   "main": "src/main/main.js",
   "license": "MIT",
-  "author": "Dictaloom Contributors",
+  "author": "Freesia Contributors",
   "repository": {
     "type": "git",
-    "url": "https://github.com/arash-san/dictaloom.git"
+    "url": "https://github.com/arash-san/freesia.git"
   },
   "bugs": {
-    "url": "https://github.com/arash-san/dictaloom/issues"
+    "url": "https://github.com/arash-san/freesia/issues"
   },
-  "homepage": "https://github.com/arash-san/dictaloom#readme",
+  "homepage": "https://github.com/arash-san/freesia#readme",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
@@ -31,8 +31,8 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.dictaloom.app",
-    "productName": "Dictaloom",
+    "appId": "com.freesia.app",
+    "productName": "Freesia",
     "artifactName": "${productName}-Setup-${version}.${ext}",
     "win": {
       "target": "nsis",
@@ -55,7 +55,7 @@
       {
         "provider": "github",
         "owner": "arash-san",
-        "repo": "dictaloom",
+        "repo": "freesia",
         "releaseType": "release"
       }
     ]

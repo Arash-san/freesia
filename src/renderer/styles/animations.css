@@ -1,198 +1,68 @@
 /* ============================================
-   Dictaloom Animations
+   Freesia — Motion
+   Soft, botanical, never frantic.
    ============================================ */
 
-/* Breathing glow for idle overlay */
-@keyframes breathe {
-  0%, 100% {
-    box-shadow: 0 0 15px rgba(0, 212, 170, 0.15), inset 0 0 15px rgba(0, 212, 170, 0.05);
-    transform: scale(1);
-  }
-  50% {
-    box-shadow: 0 0 25px rgba(0, 212, 170, 0.3), inset 0 0 25px rgba(0, 212, 170, 0.1);
-    transform: scale(1.02);
-  }
-}
-
-/* Pulsing ring for listening state */
-@keyframes pulseRing {
-  0% {
-    transform: scale(1);
-    opacity: 0.6;
-  }
-  100% {
-    transform: scale(2.2);
-    opacity: 0;
-  }
-}
-
-/* Multiple pulse rings */
-@keyframes pulseRingDelay {
-  0% { transform: scale(1); opacity: 0.4; }
-  100% { transform: scale(2.5); opacity: 0; }
-}
-
-/* Waveform bar animation */
-@keyframes waveBar {
-  0%, 100% { transform: scaleY(0.3); }
-  50% { transform: scaleY(1); }
-}
-
-/* Morphing loader for processing */
-@keyframes morphLoader {
-  0% { border-radius: 50%; transform: rotate(0deg) scale(1); }
-  25% { border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%; transform: rotate(90deg) scale(1.05); }
-  50% { border-radius: 50%; transform: rotate(180deg) scale(1); }
-  75% { border-radius: 70% 30% 30% 70% / 70% 70% 30% 30%; transform: rotate(270deg) scale(0.95); }
-  100% { border-radius: 50%; transform: rotate(360deg) scale(1); }
-}
-
-/* Spinning arc */
-@keyframes spinArc {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-/* Success checkmark draw */
-@keyframes checkmarkDraw {
-  0% { stroke-dashoffset: 48; }
-  100% { stroke-dashoffset: 0; }
-}
-
-@keyframes checkmarkCircle {
-  0% { stroke-dashoffset: 160; }
-  100% { stroke-dashoffset: 0; }
-}
-
-@keyframes checkmarkFade {
-  0% { opacity: 1; transform: scale(1); }
-  70% { opacity: 1; transform: scale(1); }
-  100% { opacity: 0; transform: scale(0.8); }
-}
-
-/* Toast slide in/out */
-@keyframes slideInRight {
-  0% { transform: translateX(120%); opacity: 0; }
-  100% { transform: translateX(0); opacity: 1; }
-}
-
-@keyframes slideOutRight {
-  0% { transform: translateX(0); opacity: 1; }
-  100% { transform: translateX(120%); opacity: 0; }
-}
-
-/* Gradient shift for backgrounds */
-@keyframes gradientShift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-
-/* Floating orbs */
-@keyframes float {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33% { transform: translate(30px, -20px) scale(1.05); }
-  66% { transform: translate(-20px, 15px) scale(0.95); }
-}
-
-@keyframes floatAlt {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33% { transform: translate(-25px, 20px) scale(0.95); }
-  66% { transform: translate(15px, -30px) scale(1.05); }
-}
-
-/* Typewriter text reveal */
-@keyframes typewriter {
-  from { max-width: 0; }
-  to { max-width: 100%; }
-}
-
-@keyframes blinkCaret {
-  0%, 50% { border-color: var(--accent); }
-  51%, 100% { border-color: transparent; }
-}
-
-/* Shake for errors */
-@keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
-  20%, 40%, 60%, 80% { transform: translateX(4px); }
-}
-
-/* Fade in */
-@keyframes fadeIn {
-  0% { opacity: 0; }
-  100% { opacity: 1; }
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.995); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 @keyframes fadeInUp {
-  0% { opacity: 0; transform: translateY(20px); }
-  100% { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes fadeInDown {
-  0% { opacity: 0; transform: translateY(-20px); }
-  100% { opacity: 1; transform: translateY(0); }
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(60px); }
+  to   { opacity: 1; transform: translateX(0); }
 }
 
-@keyframes fadeInScale {
-  0% { opacity: 0; transform: scale(0.9); }
-  100% { opacity: 1; transform: scale(1); }
+@keyframes slideOutRight {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(60px); }
 }
 
-/* Ripple */
-@keyframes ripple {
-  0% { transform: scale(0); opacity: 0.5; }
-  100% { transform: scale(4); opacity: 0; }
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
-/* Logo reveal */
-@keyframes logoReveal {
-  0% { opacity: 0; transform: scale(0.5) rotate(-10deg); filter: blur(10px); }
-  60% { opacity: 1; transform: scale(1.05) rotate(2deg); filter: blur(0); }
-  100% { opacity: 1; transform: scale(1) rotate(0deg); filter: blur(0); }
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.85); }
 }
 
-/* Stagger helper classes */
-.stagger-1 { animation-delay: 100ms; }
-.stagger-2 { animation-delay: 200ms; }
-.stagger-3 { animation-delay: 300ms; }
-.stagger-4 { animation-delay: 400ms; }
-.stagger-5 { animation-delay: 500ms; }
-
-/* Particle float */
-@keyframes particleFloat {
-  0%, 100% {
-    transform: translateY(0) translateX(0);
-    opacity: 0;
-  }
-  10% { opacity: 1; }
-  90% { opacity: 1; }
-  100% {
-    transform: translateY(-200px) translateX(40px);
-    opacity: 0;
-  }
+@keyframes ringExpand {
+  0%   { transform: scale(1); opacity: 0.55; }
+  100% { transform: scale(1.55); opacity: 0; }
 }
 
-/* Glow pulse for buttons */
-@keyframes glowPulse {
-  0%, 100% { box-shadow: 0 0 15px var(--accent-glow); }
-  50% { box-shadow: 0 0 30px var(--accent-glow), 0 0 60px rgba(0, 212, 170, 0.15); }
-}
-
-/* Progress bar */
-@keyframes progressIndeterminate {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(400%); }
-}
-
-/* Mic icon pulse */
-@keyframes micPulse {
+@keyframes micThrob {
   0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.15); }
+  50%      { transform: scale(1.06); }
 }
 
-/* Respect reduced motion */
+@keyframes bloomFloat {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50%      { transform: translateY(-7px) rotate(1.2deg); }
+}
+
+@keyframes orbDrift {
+  0%   { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(70px, 44px) scale(1.12); }
+}
+
+/* Staggered entrance for dashboard cards */
+.stagger-in > * {
+  opacity: 0;
+  animation: fadeInUp 0.55s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.stagger-in > *:nth-child(1) { animation-delay: 0.04s; }
+.stagger-in > *:nth-child(2) { animation-delay: 0.11s; }
+.stagger-in > *:nth-child(3) { animation-delay: 0.18s; }
+.stagger-in > *:nth-child(4) { animation-delay: 0.25s; }
+
+/* Respect users who prefer less motion */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

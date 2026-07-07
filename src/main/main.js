@@ -1,8 +1,37 @@
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, clipboard, nativeImage, shell, nativeTheme } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, clipboard, nativeImage, shell, nativeTheme, screen } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store');
+
+// ============================================
+// One-time migration from the old "Dictaloom" install
+// Runs before the store is created so existing users keep
+// their API key, snippets, dictionary, history, and stats.
+// ============================================
+function migrateFromDictaloom() {
+  try {
+    const newConfig = path.join(app.getPath('userData'), 'config.json');
+    if (fs.existsSync(newConfig)) return;
+    const oldDir = path.join(app.getPath('appData'), 'Dictaloom');
+    const oldConfig = path.join(oldDir, 'config.json');
+    if (!fs.existsSync(oldConfig)) return;
+    fs.mkdirSync(app.getPath('userData'), { recursive: true });
+    fs.copyFileSync(oldConfig, newConfig);
+    // Bring saved recordings along too
+    const oldRecordings = path.join(oldDir, 'failed-recordings');
+    if (fs.existsSync(oldRecordings)) {
+      const newRecordings = path.join(app.getPath('userData'), 'failed-recordings');
+      fs.mkdirSync(newRecordings, { recursive: true });
+      for (const f of fs.readdirSync(oldRecordings)) {
+        fs.copyFileSync(path.join(oldRecordings, f), path.join(newRecordings, f));
+      }
+    }
+  } catch (e) {
+    console.error('Dictaloom migration failed:', e);
+  }
+}
+migrateFromDictaloom();
 
 // ============================================
 // File-based Logger
@@ -11,7 +40,7 @@ const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB
 let logFilePath = null;
 
 function initLogger() {
-  logFilePath = path.join(app.getPath('userData'), 'dictaloom.log');
+  logFilePath = path.join(app.getPath('userData'), 'freesia.log');
 }
 
 function writeLog(level, context, message, stack) {
@@ -47,6 +76,20 @@ process.on('unhandledRejection', (reason) => {
   console.error('Unhandled Rejection:', reason);
 });
 
+// Single instance only. Multiple instances silently fight over the global
+// shortcut: a stale instance can own Ctrl+Shift+Space while its overlay is
+// dead, which is exactly "the popup stopped appearing".
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+app.on('second-instance', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
 const store = new Store({
   defaults: {
     apiKey: '',
@@ -63,7 +106,7 @@ const store = new Store({
     dictionary: [],
     snippets: [],
     history: [],
-    stats: { wordsToday: 0, timeSaved: 0, sessions: 0, lastDate: '' },
+    stats: null,
     overlayPosition: { x: -1, y: -1 },
     activeStyle: 'normal',
     autoStyleSwitch: false,
@@ -161,7 +204,7 @@ function setupAutoUpdater() {
 
   autoUpdater.on('update-not-available', (info) => {
     sendUpdateStatus('current', {
-      message: 'Dictaloom is up to date.',
+      message: 'Freesia is up to date.',
       updateInfo: sanitizeUpdateInfo(info),
       progress: null
     });
@@ -215,20 +258,23 @@ function setupAutoUpdater() {
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
-    width: 1000,
-    height: 700,
-    minWidth: 800,
-    minHeight: 550,
+    width: 1040,
+    height: 720,
+    minWidth: 860,
+    minHeight: 580,
     frame: false,
     transparent: false,
-    backgroundColor: '#060a14',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#14101c' : '#faf7f2',
     show: false,
     icon: path.join(__dirname, '..', '..', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      // The hidden-to-tray window hosts the recorder. Never throttle it,
+      // otherwise shortcuts appear dead after the app sits in the tray.
+      backgroundThrottling: false
     }
   });
 
@@ -244,23 +290,24 @@ function createMainWindow() {
       mainWindow.hide();
     }
   });
+
+  // If the renderer that owns recording dies, reset state and reload it
+  mainWindow.webContents.on('render-process-gone', (_, details) => {
+    writeLog('ERROR', 'mainWindow:render-process-gone', details.reason);
+    isRecording = false;
+    isProcessing = false;
+    hideOverlay();
+    try { mainWindow.webContents.reload(); } catch (e) { /* recreated on next activate */ }
+  });
 }
 
-function createOverlayWindow() {
-  const { screen } = require('electron');
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { width: screenW, height: screenH } = primaryDisplay.workAreaSize;
-  const overlayW = 280;
-  const overlayH = 70;
-  const defaultX = Math.round((screenW - overlayW) / 2);
-  const defaultY = screenH - overlayH - 60;
+const OVERLAY_W = 300;
+const OVERLAY_H = 74;
 
-  const pos = store.get('overlayPosition');
+function createOverlayWindow() {
   overlayWindow = new BrowserWindow({
-    width: overlayW,
-    height: overlayH,
-    x: pos.x >= 0 ? pos.x : defaultX,
-    y: pos.y >= 0 ? pos.y : defaultY,
+    width: OVERLAY_W,
+    height: OVERLAY_H,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -271,12 +318,70 @@ function createOverlayWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      backgroundThrottling: false
     }
   });
 
   overlayWindow.loadFile(path.join(__dirname, '..', 'renderer', 'overlay.html'));
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  // Keep above fullscreen apps and never appear in screen shares oddly
+  overlayWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+  overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  overlayWindow.webContents.on('render-process-gone', (_, details) => {
+    writeLog('ERROR', 'overlay:render-process-gone', details.reason);
+    try { overlayWindow.destroy(); } catch (e) { /* ignore */ }
+    overlayWindow = null;
+  });
+}
+
+// The overlay must always exist and always be on top when shown.
+function ensureOverlayWindow() {
+  if (!overlayWindow || overlayWindow.isDestroyed()) {
+    createOverlayWindow();
+  }
+  return overlayWindow;
+}
+
+function positionOverlay() {
+  // Follow the cursor's display so the pill is visible where the user works
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const { x: dx, y: dy, width: dw, height: dh } = display.workArea;
+
+  const saved = store.get('overlayPosition');
+  let x = Math.round(dx + (dw - OVERLAY_W) / 2);
+  let y = dy + dh - OVERLAY_H - 48;
+  if (saved && saved.x >= 0 && saved.y >= 0) {
+    // Respect a saved position only if it is still on a connected display
+    const onScreen = screen.getAllDisplays().some(d =>
+      saved.x >= d.workArea.x && saved.x < d.workArea.x + d.workArea.width &&
+      saved.y >= d.workArea.y && saved.y < d.workArea.y + d.workArea.height);
+    if (onScreen) { x = saved.x; y = saved.y; }
+  }
+  overlayWindow.setBounds({ x, y, width: OVERLAY_W, height: OVERLAY_H });
+}
+
+function showOverlay(state) {
+  if (!store.get('showOverlay')) return;
+  const win = ensureOverlayWindow();
+  positionOverlay();
+  // Re-assert topmost every time: Windows silently demotes always-on-top
+  // when other topmost windows churn, which made the pill stop appearing.
+  win.setAlwaysOnTop(true, 'screen-saver', 1);
+  win.showInactive();
+  win.webContents.send('overlay-state', state);
+}
+
+function hideOverlay() {
+  if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.hide();
+}
+
+function sendOverlay(channel, payload) {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.webContents.send(channel, payload);
+  }
 }
 
 function createTray() {
@@ -292,7 +397,7 @@ function createTray() {
   tray = new Tray(trayIcon);
 
   const contextMenu = Menu.buildFromTemplate([
-    { label: 'Show Dictaloom', click: () => mainWindow && mainWindow.show() },
+    { label: 'Show Freesia', click: () => mainWindow && mainWindow.show() },
     { type: 'separator' },
     { label: 'Start Dictation', click: () => startDictation() },
     { type: 'separator' },
@@ -305,7 +410,7 @@ function createTray() {
     }
   ]);
 
-  tray.setToolTip('Dictaloom - AI Voice Dictation');
+  tray.setToolTip('Freesia - AI Voice Dictation');
   tray.setContextMenu(contextMenu);
   tray.on('double-click', () => mainWindow && mainWindow.show());
 }
@@ -318,27 +423,31 @@ function registerShortcuts() {
 
   try {
     const electronDictShortcut = dictShortcut.replace('Ctrl', 'CommandOrControl');
-    globalShortcut.register(electronDictShortcut, () => {
+    const ok = globalShortcut.register(electronDictShortcut, () => {
       handleShortcut('dictate');
     });
+    if (!ok) writeLog('WARN', 'shortcuts', `Could not register ${dictShortcut} — another app may already own it`);
   } catch (e) {
-    console.error('Failed to register dictation shortcut:', e);
+    writeLog('ERROR', 'shortcuts', `Failed to register dictation shortcut: ${e.message}`, e.stack);
   }
 
   try {
     const electronCmdShortcut = cmdShortcut.replace('Ctrl', 'CommandOrControl');
-    globalShortcut.register(electronCmdShortcut, () => {
+    const ok = globalShortcut.register(electronCmdShortcut, () => {
       handleShortcut('command');
     });
+    if (!ok) writeLog('WARN', 'shortcuts', `Could not register ${cmdShortcut} — another app may already own it`);
   } catch (e) {
-    console.error('Failed to register command shortcut:', e);
+    writeLog('ERROR', 'shortcuts', `Failed to register command shortcut: ${e.message}`, e.stack);
   }
 }
 
 // Debounce and state machine for shortcut handling
 let lastShortcutTime = 0;
 let isProcessing = false;
-const SHORTCUT_COOLDOWN_MS = 500;
+let processingSince = 0;
+const SHORTCUT_COOLDOWN_MS = 350;
+const PROCESSING_STUCK_MS = 45000;
 
 function handleShortcut(mode) {
   const now = Date.now();
@@ -346,7 +455,12 @@ function handleShortcut(mode) {
   if (now - lastShortcutTime < SHORTCUT_COOLDOWN_MS) return;
   lastShortcutTime = now;
 
-  // Don't allow new recording while processing a previous one
+  // Never let a stale processing flag eat shortcuts forever
+  if (isProcessing && now - processingSince > PROCESSING_STUCK_MS) {
+    writeLog('WARN', 'handleShortcut', 'Clearing stuck processing state');
+    isProcessing = false;
+    hideOverlay();
+  }
   if (isProcessing) return;
 
   if (isRecording) {
@@ -364,38 +478,31 @@ function startDictation() {
   isRecording = true;
   globalShortcut.register('Escape', cancelDictation);
   if (mainWindow) mainWindow.webContents.send('dictation-start');
-  if (overlayWindow && store.get('showOverlay')) {
-    overlayWindow.show();
-    overlayWindow.webContents.send('overlay-state', 'listening');
-  }
+  showOverlay('listening');
 }
 
 function stopDictation(mode = 'dictate') {
   if (!isRecording) return; // Guard against double-stop
   isRecording = false;
   isProcessing = true;
+  processingSince = Date.now();
   globalShortcut.unregister('Escape');
   if (mainWindow) mainWindow.webContents.send('dictation-stop', mode);
-  if (overlayWindow) {
-    overlayWindow.webContents.send('overlay-state', 'processing');
-  }
-  // Safety timeout: reset processing state after 30s if renderer never responds
+  sendOverlay('overlay-state', 'processing');
+  // Safety timeout: reset processing state if renderer never responds
   setTimeout(() => {
-    if (isProcessing) {
+    if (isProcessing && Date.now() - processingSince >= PROCESSING_STUCK_MS - 1000) {
       isProcessing = false;
-      if (overlayWindow) overlayWindow.hide();
+      hideOverlay();
     }
-  }, 30000);
+  }, PROCESSING_STUCK_MS);
 }
 
 function startCommandMode() {
   isRecording = true;
   globalShortcut.register('Escape', cancelDictation);
   if (mainWindow) mainWindow.webContents.send('command-start');
-  if (overlayWindow && store.get('showOverlay')) {
-    overlayWindow.show();
-    overlayWindow.webContents.send('overlay-state', 'listening');
-  }
+  showOverlay('listening');
 }
 
 function cancelDictation() {
@@ -404,7 +511,7 @@ function cancelDictation() {
   isProcessing = false;
   globalShortcut.unregister('Escape');
   if (mainWindow) mainWindow.webContents.send('dictation-cancel');
-  if (overlayWindow) overlayWindow.hide();
+  hideOverlay();
 }
 
 async function injectText(text) {
@@ -466,31 +573,36 @@ ipcMain.handle('copy-text', (_, text) => {
 ipcMain.handle('minimize-window', () => mainWindow && mainWindow.minimize());
 ipcMain.handle('close-window', () => mainWindow && mainWindow.hide());
 
+// Renderer failed to start recording (mic denied, device missing).
+// Without this, main-process state stayed "recording" and the next
+// shortcut press behaved like a stop — looking like a dead hotkey.
+ipcMain.handle('recording-failed', () => {
+  isRecording = false;
+  isProcessing = false;
+  globalShortcut.unregister('Escape');
+  sendOverlay('overlay-state', 'error');
+  setTimeout(() => hideOverlay(), 2000);
+});
+
 ipcMain.handle('overlay-done', () => {
   isProcessing = false;
-  if (overlayWindow) {
-    overlayWindow.webContents.send('overlay-state', 'done');
-    setTimeout(() => { if (overlayWindow) overlayWindow.hide(); }, 1500);
-  }
+  sendOverlay('overlay-state', 'done');
+  setTimeout(() => hideOverlay(), 1500);
 });
 
 ipcMain.handle('overlay-error', () => {
   isProcessing = false;
-  if (overlayWindow) {
-    overlayWindow.webContents.send('overlay-state', 'error');
-    setTimeout(() => { if (overlayWindow) overlayWindow.hide(); }, 2000);
-  }
+  sendOverlay('overlay-state', 'error');
+  setTimeout(() => hideOverlay(), 2000);
 });
 
 ipcMain.handle('overlay-hide', () => {
   isProcessing = false;
-  if (overlayWindow) overlayWindow.hide();
+  hideOverlay();
 });
 
 ipcMain.handle('overlay-timer', (_, timeStr) => {
-  if (overlayWindow) {
-    overlayWindow.webContents.send('overlay-timer', timeStr);
-  }
+  sendOverlay('overlay-timer', timeStr);
 });
 
 ipcMain.handle('open-external', (_, url) => shell.openExternal(url));
@@ -558,7 +670,7 @@ ipcMain.handle('set-auto-launch', (_, enabled) => {
 
 ipcMain.handle('save-and-open-log', async (_, logContent) => {
   // Open the persistent log file instead of writing a temp one
-  const persistentLog = path.join(app.getPath('userData'), 'dictaloom.log');
+  const persistentLog = path.join(app.getPath('userData'), 'freesia.log');
   // Also append the renderer error log for completeness
   if (logContent && logContent !== 'No errors recorded.') {
     fs.appendFileSync(persistentLog, '\n--- Renderer Error Log Snapshot ---\n' + logContent + '\n', 'utf-8');
@@ -624,7 +736,7 @@ ipcMain.handle('delete-failed-recording', async (_, baseName) => {
 // App lifecycle
 app.whenReady().then(() => {
   initLogger();
-  writeLog('INFO', 'app', 'Dictaloom starting up');
+  writeLog('INFO', 'app', 'Freesia starting up');
   applyAppTheme(store.get('theme'));
   createMainWindow();
   createOverlayWindow();

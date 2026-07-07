@@ -35,7 +35,7 @@ jobs:
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openvoice-windows
+          name: freesia-windows
           path: |
             dist/*.exe
             dist/*.yml
