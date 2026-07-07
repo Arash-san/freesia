@@ -10,33 +10,34 @@
 </head>
 <body>
   <div id="app">
-    <!-- Ambient botanical glow -->
-    <div class="ambient-bg" id="ambientBg">
-      <div class="orb orb-1"></div>
-      <div class="orb orb-2"></div>
-      <div class="orb orb-3"></div>
+    <!-- Ambient botanical aurora -->
+    <div class="aurora" id="aurora">
+      <div class="aurora-blob blob-1"></div>
+      <div class="aurora-blob blob-2"></div>
+      <div class="aurora-blob blob-3"></div>
+      <div class="aurora-grain"></div>
     </div>
 
-    <!-- Window chrome (frameless) -->
-    <div class="window-chrome drag-region" id="windowChrome">
-      <div class="window-controls no-drag">
+    <!-- Global frameless title strip: drag + window controls (all pages) -->
+    <div class="titlebar drag-region" id="titlebar">
+      <div class="titlebar-controls no-drag">
         <button class="win-btn win-minimize" id="btnMinimize" title="Minimize">
-          <svg width="10" height="10" viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          <svg width="11" height="11" viewBox="0 0 11 11"><line x1="2" y1="5.5" x2="9" y2="5.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
         </button>
         <button class="win-btn win-close" id="btnClose" title="Close to tray">
-          <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          <svg width="11" height="11" viewBox="0 0 11 11"><path d="M2.5 2.5l6 6M8.5 2.5l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
         </button>
       </div>
     </div>
 
-    <!-- Onboarding Page -->
+    <!-- ============ Onboarding ============ -->
     <div class="page" id="pageOnboarding">
       <div class="onboarding-container">
         <!-- Step 1: Welcome -->
         <div class="onboarding-step active" id="step1">
           <div class="onboarding-content text-center">
             <div class="logo-container" id="logoContainer">
-              <img class="logo-bloom" src="../../assets/icon.png" alt="Freesia" width="104" height="104">
+              <img class="logo-bloom" src="../../assets/icon.png" alt="Freesia" width="112" height="112">
               <div class="logo-rings">
                 <div class="logo-ring ring-1"></div>
                 <div class="logo-ring ring-2"></div>
@@ -152,227 +153,176 @@
       </div>
     </div>
 
-    <!-- Main / Dashboard Page -->
+    <!-- ============ Main app ============ -->
     <div class="page" id="pageMain">
-      <div class="main-container">
-        <aside class="main-sidebar">
-          <div class="sidebar-logo drag-region">
-            <img src="../../assets/icon.png" alt="" width="30" height="30" class="sidebar-bloom">
-            <span class="sidebar-logo-text">Freesia</span>
-          </div>
-
-          <nav class="sidebar-nav no-drag">
-            <button class="nav-item active" data-page="dashboard" id="navDashboard">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
-              Dashboard
-            </button>
-            <button class="nav-item" data-page="dictionary" id="navDictionary">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-              Dictionary
-            </button>
-            <button class="nav-item" data-page="snippets" id="navSnippets">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/></svg>
-              Snippets
-            </button>
-            <button class="nav-item" data-page="history" id="navHistory">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              History
-            </button>
-          </nav>
-
-          <div class="sidebar-bottom no-drag">
-            <button class="nav-item" id="navSettings">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-              Settings
-            </button>
-          </div>
-        </aside>
-
-        <div class="main-content">
-          <!-- Dashboard -->
-          <div class="content-page active" id="dashboardPage">
-            <div class="dashboard-header">
-              <h1 class="heading-lg">Dashboard</h1>
-              <div class="status-badge" id="statusBadge">
-                <span class="status-dot"></span>
-                Ready
-              </div>
-            </div>
-
-            <div class="dashboard-grid stagger-in">
-              <div class="stat-card glass-card">
-                <div class="stat-top">
-                  <div class="stat-icon">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7V5a1 1 0 011-1h14a1 1 0 011 1v2"/><path d="M12 4v16"/><path d="M9 20h6"/></svg>
-                  </div>
-                  <div class="stat-label">Words today</div>
-                </div>
-                <div class="stat-value" id="statWords">0</div>
-                <svg class="stat-spark" viewBox="0 0 100 24" preserveAspectRatio="none"><path d="M0 20 L14 16 L28 18 L42 11 L56 13 L70 7 L84 9 L100 3" fill="none" stroke="url(#sparkGrad)" stroke-width="2" stroke-linecap="round"/></svg>
-              </div>
-              <div class="stat-card glass-card">
-                <div class="stat-top">
-                  <div class="stat-icon">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 13.5"/></svg>
-                  </div>
-                  <div class="stat-label">Time saved</div>
-                </div>
-                <div class="stat-value" id="statTime">0m</div>
-                <svg class="stat-spark" viewBox="0 0 100 24" preserveAspectRatio="none"><path d="M0 21 L14 18 L28 14 L42 16 L56 10 L70 12 L84 6 L100 4" fill="none" stroke="url(#sparkGrad)" stroke-width="2" stroke-linecap="round"/></svg>
-              </div>
-              <div class="stat-card glass-card">
-                <div class="stat-top">
-                  <div class="stat-icon">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/></svg>
-                  </div>
-                  <div class="stat-label">Sessions</div>
-                </div>
-                <div class="stat-value" id="statSessions">0</div>
-                <svg class="stat-spark" viewBox="0 0 100 24" preserveAspectRatio="none"><path d="M0 18 L14 20 L28 13 L42 15 L56 9 L70 13 L84 7 L100 6" fill="none" stroke="url(#sparkGrad)" stroke-width="2" stroke-linecap="round"/></svg>
-              </div>
-              <div class="stat-card glass-card">
-                <div class="stat-top">
-                  <div class="stat-icon">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2c1 4-1 5.5-2.5 7C8 10.5 7 12.5 7 14a5 5 0 0010 0c0-.9-.2-1.8-.6-2.6-.9.9-1.9 1.1-2.9.6 1-2.5.5-6-1.5-10z"/></svg>
-                  </div>
-                  <div class="stat-label">Day streak</div>
-                </div>
-                <div class="stat-value" id="statStreak">0</div>
-                <svg class="stat-spark" viewBox="0 0 100 24" preserveAspectRatio="none"><path d="M0 20 L14 17 L28 15 L42 12 L56 12 L70 9 L84 7 L100 5" fill="none" stroke="url(#sparkGrad)" stroke-width="2" stroke-linecap="round"/></svg>
-              </div>
-            </div>
-
-            <!-- Lifetime stats strip -->
-            <div class="lifetime-strip glass-card">
-              <div class="lifetime-item">
-                <span class="lifetime-value" id="statWordsAll">0</span>
-                <span class="lifetime-label">words all-time</span>
-              </div>
-              <div class="lifetime-divider"></div>
-              <div class="lifetime-item">
-                <span class="lifetime-value" id="statTimeAll">0m</span>
-                <span class="lifetime-label">total time saved</span>
-              </div>
-              <div class="lifetime-divider"></div>
-              <div class="lifetime-item">
-                <span class="lifetime-value" id="statSessionsAll">0</span>
-                <span class="lifetime-label">total sessions</span>
-              </div>
-              <div class="lifetime-divider"></div>
-              <div class="lifetime-item">
-                <span class="lifetime-value" id="statAvg">0</span>
-                <span class="lifetime-label">avg words / session</span>
-              </div>
-            </div>
-
-            <!-- Active Style Selector -->
-            <div class="style-selector-card glass-card">
-              <div class="style-selector-header">
-                <div>
-                  <h3 class="heading-sm">Dictation Style</h3>
-                  <p class="text-secondary text-sm" id="styleAutoLabel" style="display:none;">Auto-switching by focused app</p>
-                </div>
-                <div class="style-active-badge" id="activeStyleBadge">🗣️ Normal</div>
-              </div>
-              <div class="style-grid" id="styleGrid"></div>
-            </div>
-
-            <!-- Quick Test -->
-            <div class="quick-test glass-card">
-              <div class="quick-test-header">
-                <h3 class="heading-md">Quick Test</h3>
-                <div class="recording-timer" id="recordingTimer" style="display: none;">
-                  <span class="recording-dot"></span>
-                  <span class="recording-time" id="recordingTime">0:00</span>
-                </div>
-              </div>
-              <p class="text-secondary text-sm">Test your microphone right here, or press <span class="kbd kbd-inline">Ctrl</span>+<span class="kbd kbd-inline">Shift</span>+<span class="kbd kbd-inline">Space</span> anywhere.</p>
-              <div class="test-area">
-                <div class="waveform-container" id="waveformContainer">
-                  <canvas id="waveformCanvas" width="300" height="64"></canvas>
-                </div>
-                <button class="mic-btn no-drag" id="btnMicTest" title="Start / stop dictation">
-                  <div class="mic-btn-rings">
-                    <div class="mic-ring"></div>
-                    <div class="mic-ring"></div>
-                  </div>
-                  <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-                </button>
-                <div class="waveform-container waveform-mirror">
-                  <canvas id="waveformCanvasMirror" width="300" height="64"></canvas>
-                </div>
-              </div>
-              <div class="test-output" id="testOutput">
-                <span class="text-muted">Your transcription will appear here...</span>
-              </div>
-            </div>
-
-            <!-- Saved Recordings -->
-            <div class="failed-recordings-section glass-card" id="failedRecordingsSection" style="display: none;">
-              <div class="section-row">
-                <h3 class="heading-md">Saved Recordings</h3>
-                <span class="failed-count-badge" id="failedCountBadge">0</span>
-              </div>
-              <p class="text-secondary text-sm" style="margin-bottom: var(--space-md);">Your recordings are saved safely on disk. You can retry transcription anytime.</p>
-              <div id="failedRecordingsList"></div>
-            </div>
-          </div>
-
-          <!-- Dictionary Page -->
-          <div class="content-page" id="dictionaryPage">
-            <div class="dashboard-header">
-              <h1 class="heading-lg">Personal Dictionary</h1>
-              <button class="btn btn-primary btn-sm" id="btnAddWord">+ Add Word</button>
-            </div>
-            <p class="text-secondary" style="margin-bottom: var(--space-lg);">Add custom words, names, and technical terms so Freesia always gets them right.</p>
-            <div class="dictionary-input glass-card" id="dictionaryInput" style="display:none;">
-              <div class="input-with-btn">
-                <input type="text" class="input" id="newWordInput" placeholder="Type a word or phrase...">
-                <button class="btn btn-primary" id="btnSaveWord">Add</button>
-                <button class="btn btn-ghost" id="btnCancelWord">Cancel</button>
-              </div>
-            </div>
-            <div class="dictionary-list" id="dictionaryList"></div>
-          </div>
-
-          <!-- Snippets Page -->
-          <div class="content-page" id="snippetsPage">
-            <div class="dashboard-header">
-              <h1 class="heading-lg">Voice Snippets</h1>
-              <button class="btn btn-primary btn-sm" id="btnAddSnippet">+ New Snippet</button>
-            </div>
-            <p class="text-secondary" style="margin-bottom: var(--space-sm);">Say a trigger phrase and Freesia expands it into your full text.</p>
-            <p class="text-muted text-sm" style="margin-bottom: var(--space-lg);">✨ Smart expansion: triggers only fire when you clearly mean them — a casual "thank you" won't insert your formal signature.</p>
-            <div class="snippet-form glass-card" id="snippetForm" style="display:none;">
-              <div class="input-group">
-                <label>Trigger Phrase</label>
-                <input type="text" class="input" id="snippetTrigger" placeholder='e.g. "my email"'>
-              </div>
-              <div class="input-group" style="margin-top: var(--space-md);">
-                <label>Expansion Text</label>
-                <textarea class="input" id="snippetExpansion" rows="3" placeholder="e.g. john.doe@example.com"></textarea>
-              </div>
-              <div class="flex gap-sm" style="margin-top: var(--space-md);">
-                <button class="btn btn-primary" id="btnSaveSnippet">Save Snippet</button>
-                <button class="btn btn-ghost" id="btnCancelSnippet">Cancel</button>
-              </div>
-            </div>
-            <div class="snippet-list" id="snippetList"></div>
-          </div>
-
-          <!-- History Page -->
-          <div class="content-page" id="historyPage">
-            <div class="dashboard-header">
-              <h1 class="heading-lg">History</h1>
-              <button class="btn btn-ghost btn-sm" id="btnClearHistory">Clear All</button>
-            </div>
-            <div class="history-list" id="historyList"></div>
-          </div>
+      <!-- Top bar: brand · centered segmented nav · actions -->
+      <header class="topbar">
+        <div class="brand">
+          <img src="../../assets/icon.png" alt="" width="30" height="30" class="brand-bloom">
+          <span class="brand-name">Freesia</span>
         </div>
-      </div>
+
+        <nav class="topnav" id="topnav">
+          <span class="topnav-indicator" id="topnavIndicator"></span>
+          <button class="topnav-item active" data-page="dashboard" id="navDashboard">Home</button>
+          <button class="topnav-item" data-page="dictionary" id="navDictionary">Dictionary</button>
+          <button class="topnav-item" data-page="snippets" id="navSnippets">Snippets</button>
+          <button class="topnav-item" data-page="history" id="navHistory">History</button>
+        </nav>
+
+        <div class="topbar-actions">
+          <button class="icon-btn" id="btnThemeToggle" title="Toggle light / dark">
+            <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+            <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>
+          </button>
+          <button class="icon-btn" id="navSettings" title="Settings">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="stage">
+        <!-- ===== Home ===== -->
+        <section class="view active" id="dashboardPage">
+          <!-- Hero: the voice bloom -->
+          <div class="hero">
+            <div class="hero-style-pill" id="activeStyleBadge" title="Active dictation style">🗣️ Normal</div>
+
+            <div class="bloom-stage">
+              <div class="recording-timer" id="recordingTimer" style="display:none;">
+                <span class="recording-dot"></span>
+                <span class="recording-time" id="recordingTime">0:00</span>
+              </div>
+              <canvas class="bloom-wave" id="waveformCanvas" width="380" height="380"></canvas>
+              <button class="bloom-btn no-drag" id="btnMicTest" title="Press to speak">
+                <span class="bloom-ring r1"></span>
+                <span class="bloom-ring r2"></span>
+                <span class="bloom-ring r3"></span>
+                <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+              </button>
+            </div>
+
+            <div class="hero-hint">
+              Press to speak, or
+              <span class="kbd">Ctrl</span><span class="kbd">Shift</span><span class="kbd">Space</span>
+            </div>
+
+            <div class="hero-output" id="testOutput">
+              <span class="text-muted">Your words will bloom here…</span>
+            </div>
+          </div>
+
+          <!-- Stat pods -->
+          <div class="pod-row stagger-in">
+            <div class="pod glass-card">
+              <div class="pod-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7V5a1 1 0 011-1h14a1 1 0 011 1v2"/><path d="M12 4v16"/><path d="M9 20h6"/></svg></div>
+              <div class="pod-body"><div class="pod-value" id="statWords">0</div><div class="pod-label">Words today</div></div>
+            </div>
+            <div class="pod glass-card">
+              <div class="pod-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 13.5"/></svg></div>
+              <div class="pod-body"><div class="pod-value" id="statTime">0m</div><div class="pod-label">Time saved</div></div>
+            </div>
+            <div class="pod glass-card">
+              <div class="pod-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2c1 4-1 5.5-2.5 7C8 10.5 7 12.5 7 14a5 5 0 0010 0c0-.9-.2-1.8-.6-2.6-.9.9-1.9 1.1-2.9.6 1-2.5.5-6-1.5-10z"/></svg></div>
+              <div class="pod-body"><div class="pod-value" id="statStreak">0</div><div class="pod-label">Day streak</div></div>
+            </div>
+            <div class="pod glass-card">
+              <div class="pod-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/></svg></div>
+              <div class="pod-body"><div class="pod-value" id="statSessions">0</div><div class="pod-label">Sessions</div></div>
+            </div>
+          </div>
+
+          <!-- Lifetime ribbon -->
+          <div class="ribbon">
+            <span class="ribbon-item"><b id="statWordsAll">0</b> words all-time</span>
+            <span class="ribbon-item"><b id="statTimeAll">0m</b> total time saved</span>
+            <span class="ribbon-item"><b id="statSessionsAll">0</b> total sessions</span>
+            <span class="ribbon-item"><b id="statAvg">0</b> avg words / session</span>
+          </div>
+
+          <!-- Style selector -->
+          <div class="panel glass-card">
+            <div class="panel-head">
+              <div>
+                <h3 class="heading-sm">Dictation Style</h3>
+                <p class="text-secondary text-sm" id="styleAutoLabel" style="display:none;">Auto-switching by focused app</p>
+              </div>
+            </div>
+            <div class="style-grid" id="styleGrid"></div>
+          </div>
+
+          <!-- Saved recordings -->
+          <div class="panel glass-card" id="failedRecordingsSection" style="display:none;">
+            <div class="section-row">
+              <h3 class="heading-sm">Saved Recordings</h3>
+              <span class="count-badge" id="failedCountBadge">0</span>
+            </div>
+            <p class="text-secondary text-sm" style="margin-bottom: var(--space-md);">Your recordings are saved safely on disk. You can retry transcription anytime.</p>
+            <div id="failedRecordingsList"></div>
+          </div>
+        </section>
+
+        <!-- ===== Dictionary ===== -->
+        <section class="view" id="dictionaryPage">
+          <div class="view-head">
+            <div>
+              <h1 class="heading-lg">Personal Dictionary</h1>
+              <p class="text-secondary">Add custom words, names, and technical terms so Freesia always gets them right.</p>
+            </div>
+            <button class="btn btn-primary btn-sm" id="btnAddWord">+ Add Word</button>
+          </div>
+          <div class="dictionary-input glass-card" id="dictionaryInput" style="display:none;">
+            <div class="input-with-btn">
+              <input type="text" class="input" id="newWordInput" placeholder="Type a word or phrase...">
+              <button class="btn btn-primary" id="btnSaveWord">Add</button>
+              <button class="btn btn-ghost" id="btnCancelWord">Cancel</button>
+            </div>
+          </div>
+          <div class="dictionary-list" id="dictionaryList"></div>
+        </section>
+
+        <!-- ===== Snippets ===== -->
+        <section class="view" id="snippetsPage">
+          <div class="view-head">
+            <div>
+              <h1 class="heading-lg">Voice Snippets</h1>
+              <p class="text-secondary">Say a trigger phrase and Freesia expands it into your full text.</p>
+              <p class="text-muted text-sm" style="margin-top:4px;">✨ Smart expansion: triggers only fire when you clearly mean them — a casual "thank you" won't insert your formal signature.</p>
+            </div>
+            <button class="btn btn-primary btn-sm" id="btnAddSnippet">+ New Snippet</button>
+          </div>
+          <div class="snippet-form glass-card" id="snippetForm" style="display:none;">
+            <div class="input-group">
+              <label>Trigger Phrase</label>
+              <input type="text" class="input" id="snippetTrigger" placeholder='e.g. "my email"'>
+            </div>
+            <div class="input-group" style="margin-top: var(--space-md);">
+              <label>Expansion Text</label>
+              <textarea class="input" id="snippetExpansion" rows="3" placeholder="e.g. john.doe@example.com"></textarea>
+            </div>
+            <div class="flex gap-sm" style="margin-top: var(--space-md);">
+              <button class="btn btn-primary" id="btnSaveSnippet">Save Snippet</button>
+              <button class="btn btn-ghost" id="btnCancelSnippet">Cancel</button>
+            </div>
+          </div>
+          <div class="snippet-list" id="snippetList"></div>
+        </section>
+
+        <!-- ===== History ===== -->
+        <section class="view" id="historyPage">
+          <div class="view-head">
+            <div>
+              <h1 class="heading-lg">History</h1>
+              <p class="text-secondary">Your recent transcriptions.</p>
+            </div>
+            <button class="btn btn-ghost btn-sm" id="btnClearHistory">Clear All</button>
+          </div>
+          <div class="history-list" id="historyList"></div>
+        </section>
+      </main>
     </div>
 
-    <!-- Settings Page -->
+    <!-- ============ Settings ============ -->
     <div class="page" id="pageSettings">
       <div class="settings-container">
         <div class="settings-header">
@@ -384,7 +334,6 @@
         </div>
 
         <div class="settings-sections">
-          <!-- API Key -->
           <div class="section-title">API Configuration</div>
           <div class="glass-card settings-card">
             <div class="setting-row">
@@ -396,7 +345,6 @@
             </div>
           </div>
 
-          <!-- Shortcuts -->
           <div class="section-title">Keyboard Shortcuts</div>
           <div class="glass-card settings-card">
             <div class="setting-row">
@@ -416,7 +364,6 @@
             </div>
           </div>
 
-          <!-- Styles -->
           <div class="section-title">Styles & Auto-Switch</div>
           <div class="glass-card settings-card">
             <div class="setting-row">
@@ -439,7 +386,6 @@
             </div>
           </div>
 
-          <!-- Dictation -->
           <div class="section-title">Dictation</div>
           <div class="glass-card settings-card">
             <div class="setting-row" style="flex-direction: column; align-items: stretch;">
@@ -485,8 +431,7 @@
             </div>
           </div>
 
-          <!-- System -->
-          <div class="section-title">System</div>
+          <div class="section-title">Appearance & System</div>
           <div class="glass-card settings-card">
             <div class="setting-row">
               <div class="setting-info">
@@ -545,13 +490,12 @@
             </div>
           </div>
 
-          <!-- About -->
           <div class="section-title">About</div>
           <div class="glass-card settings-card">
             <div class="setting-row">
               <div class="setting-info">
                 <div class="setting-title">Freesia</div>
-                <div class="setting-desc" id="appVersionLabel">Version 2.0.0 - MIT License</div>
+                <div class="setting-desc" id="appVersionLabel">Version 2.1.0 - MIT License</div>
               </div>
               <button class="btn btn-ghost btn-sm" id="btnGitHub">
                 GitHub
@@ -575,7 +519,6 @@
             </div>
           </div>
 
-          <!-- Danger Zone -->
           <div class="section-title">Danger Zone</div>
           <div class="glass-card settings-card danger-zone">
             <div class="setting-row">
@@ -598,7 +541,7 @@
       </div>
     </div>
 
-    <!-- Shared SVG defs (sparkline gradient) -->
+    <!-- Shared SVG defs -->
     <svg width="0" height="0" style="position:absolute">
       <defs>
         <linearGradient id="sparkGrad" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -608,7 +551,6 @@
       </defs>
     </svg>
 
-    <!-- Toast Container -->
     <div class="toast-container" id="toastContainer"></div>
   </div>
 

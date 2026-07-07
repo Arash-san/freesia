@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.0
+
+- Fundamentally redesigned the interface around a single voice "bloom": the microphone is now a large glowing centrepiece with a radial waveform that blooms outward as you speak. Replaced the left sidebar with a centered segmented top navigation, added capsule stat pods, a lifetime ribbon, and faint botanical corner art.
+- Fixed left navigation not switching sections. The rebuilt stylesheet had dropped the rule that hides inactive sections, so all views rendered stacked and the buttons appeared to do nothing. Added a test that loads the real page and asserts navigation swaps the visible section.
+- Added a prominent light/dark theme toggle in the top bar; light and dark themes are both fully styled.
+- Added a `npm test` suite (navigation, stats math, snippet-intent instructions, and a guard that the CSS hides inactive views) so this class of regression is caught automatically.
+- New README banner: microphone, keyboard, and a soundwave blooming into freesia flowers, cropped to a wide strip and compressed (down from 1536x1024/1.7 MB to 1200x534/0.28 MB).
+
 ## 2.0.1
 
 - Text injection failures are no longer silent: they are written to the log file, the transcript is left in the clipboard so it can be pasted manually with Ctrl+V, and a toast explains what happened.

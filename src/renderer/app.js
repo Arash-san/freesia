@@ -176,6 +176,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderStyleGrid();
   renderAppRules();
   loadFailedRecordings();
+  // Place the segmented-nav highlight once the top bar has laid out
+  requestAnimationFrame(positionNavIndicator);
 });
 
 // ============================================
@@ -188,12 +190,25 @@ function showPage(pageId) {
 }
 
 function showContentPage(pageId) {
-  document.querySelectorAll('.content-page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.topnav-item').forEach(n => n.classList.remove('active'));
   const page = document.getElementById(pageId);
   if (page) page.classList.add('active');
-  const nav = document.querySelector(`[data-page="${pageId.replace('Page', '')}"]`);
+  const nav = document.querySelector(`.topnav-item[data-page="${pageId.replace('Page', '')}"]`);
   if (nav) nav.classList.add('active');
+  positionNavIndicator();
+  // Scroll the stage back to the top on view change
+  const stage = document.querySelector('.stage');
+  if (stage) stage.scrollTop = 0;
+}
+
+// Slide the segmented-nav highlight under the active item
+function positionNavIndicator() {
+  const indicator = document.getElementById('topnavIndicator');
+  const active = document.querySelector('.topnav-item.active');
+  if (!indicator || !active) return;
+  indicator.style.width = `${active.offsetWidth}px`;
+  indicator.style.transform = `translateX(${active.offsetLeft - 4}px)`;
 }
 
 // ============================================
@@ -227,12 +242,19 @@ function bindEvents() {
     });
   }
 
-  // Sidebar nav
-  document.querySelectorAll('.nav-item[data-page]').forEach(btn => {
+  // Top segmented nav
+  document.querySelectorAll('.topnav-item[data-page]').forEach(btn => {
     btn.addEventListener('click', () => showContentPage(btn.dataset.page + 'Page'));
   });
   document.getElementById('navSettings')?.addEventListener('click', () => showPage('pageSettings'));
-  document.getElementById('btnBackSettings')?.addEventListener('click', () => showPage('pageMain'));
+  document.getElementById('btnBackSettings')?.addEventListener('click', () => {
+    showPage('pageMain');
+    // Recompute the nav highlight now that the bar is measurable again
+    requestAnimationFrame(positionNavIndicator);
+  });
+  document.getElementById('btnThemeToggle')?.addEventListener('click', toggleTheme);
+  // Keep the nav highlight aligned when the window resizes
+  window.addEventListener('resize', positionNavIndicator);
 
   // Settings
   document.getElementById('btnChangeKey')?.addEventListener('click', () => {
@@ -368,6 +390,7 @@ async function finishOnboarding() {
   await saveSetting('onboarded', true);
   settings.onboarded = true;
   showPage('pageMain');
+  requestAnimationFrame(positionNavIndicator);
   showToast('Welcome to Freesia! 🌸', 'success');
 }
 
@@ -586,14 +609,26 @@ async function setTheme(themeSource) {
     shouldUseDarkColors: window.matchMedia?.('(prefers-color-scheme: dark)').matches
   });
 
+  // Keep the Settings dropdown in sync with the top-bar toggle
+  const themeSelect = document.getElementById('selectTheme');
+  if (themeSelect) themeSelect.value = themeSource;
+
   try {
     const themeInfo = await api.setAppTheme?.(themeSource);
     if (themeInfo) applyTheme(themeInfo);
-    showToast(`Theme set to ${themeSource}`, 'success');
   } catch (e) {
     logError('setTheme', e);
     await saveSetting('theme', themeSource);
   }
+}
+
+// Top-bar quick toggle: flips between the two effective appearances and
+// pins an explicit choice (so it no longer follows the system).
+function toggleTheme() {
+  const isDark = document.documentElement.dataset.theme !== 'light';
+  const next = isDark ? 'light' : 'dark';
+  setTheme(next);
+  showToast(next === 'dark' ? '🌙 Dark theme' : '☀️ Light theme', 'info');
 }
 
 async function initAppMetadata() {
@@ -1010,6 +1045,7 @@ async function startRecording() {
     mediaRecorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
       cancelAnimationFrame(animFrameId);
+      clearWaveform();
       const btn = document.getElementById('btnMicTest');
       if (btn) btn.classList.remove('recording');
       stopRecordingTimer();
@@ -1325,56 +1361,80 @@ function expandSnippets(text) {
 // ============================================
 // Waveform Visualization
 // ============================================
+// Radial waveform that blooms outward from the central mic button, like
+// petals of sound. Drawn on the single #waveformCanvas behind the bloom.
 function drawWaveform() {
-  const canvases = [
-    document.getElementById('waveformCanvas'),
-    document.getElementById('waveformCanvasMirror')
-  ].filter(Boolean);
-  if (canvases.length === 0 || !analyser) return;
+  const canvas = document.getElementById('waveformCanvas');
+  if (!canvas || !analyser) return;
+  const ctx = canvas.getContext('2d');
   const bufferLength = analyser.frequencyBinCount;
   const dataArray = new Uint8Array(bufferLength);
-  const barCount = 32;
+  const BAR_COUNT = 88;
 
-  function paint(canvas, mirrored) {
-    const ctx = canvas.getContext('2d');
-    // Resize canvas dynamically to fit container and prevent overflow
-    const container = canvas.parentElement;
-    if (container) {
-      const targetWidth = container.clientWidth;
-      const targetHeight = container.clientHeight;
-      if (canvas.width !== targetWidth) canvas.width = targetWidth;
-      if (canvas.height !== targetHeight) canvas.height = targetHeight;
-    }
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const dynamicBarWidth = canvas.width / barCount - 2;
-
-    for (let i = 0; i < barCount; i++) {
-      // Mirror so the loudest bars hug the mic button on both sides
-      const barIndex = mirrored ? barCount - 1 - i : i;
-      const dataIndex = Math.floor(barIndex * bufferLength / barCount);
-      const value = dataArray[dataIndex] / 255;
-      const barHeight = Math.max(3, value * canvas.height * 0.9);
-      const x = i * (dynamicBarWidth + 2);
-      const y = (canvas.height - barHeight) / 2;
-
-      const gradient = ctx.createLinearGradient(x, y, x, y + barHeight);
-      gradient.addColorStop(0, 'rgba(167, 139, 250, 0.9)');
-      gradient.addColorStop(1, 'rgba(244, 114, 182, 0.6)');
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.roundRect(x, y, dynamicBarWidth, barHeight, 2);
-      ctx.fill();
-    }
-  }
+  // Petal palette read from the active theme so it works in light + dark
+  const styles = getComputedStyle(document.documentElement);
+  const violet = (styles.getPropertyValue('--accent-violet') || '#A78BFA').trim();
+  const pink = (styles.getPropertyValue('--accent-pink') || '#F472B6').trim();
+  const amber = (styles.getPropertyValue('--accent-amber') || '#FBBF24').trim();
 
   function draw() {
     animFrameId = requestAnimationFrame(draw);
     analyser.getByteFrequencyData(dataArray);
-    paint(canvases[0], true);
-    if (canvases[1]) paint(canvases[1], false);
+
+    const size = canvas.clientWidth || 380;
+    if (canvas.width !== size) { canvas.width = size; canvas.height = size; }
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    // Inner radius sits just outside the 184px mic button
+    const inner = size * 0.265;
+    const maxLen = size * 0.20;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const angle = (i / BAR_COUNT) * Math.PI * 2 - Math.PI / 2;
+      const dataIndex = Math.floor((i / BAR_COUNT) * bufferLength * 0.7);
+      const value = dataArray[dataIndex] / 255;
+      const len = 4 + value * maxLen;
+
+      const x1 = cx + Math.cos(angle) * inner;
+      const y1 = cy + Math.sin(angle) * inner;
+      const x2 = cx + Math.cos(angle) * (inner + len);
+      const y2 = cy + Math.sin(angle) * (inner + len);
+
+      // Colour ramps violet → pink → amber around the ring
+      const t = i / BAR_COUNT;
+      const color = t < 0.5 ? lerpColor(violet, pink, t * 2) : lerpColor(pink, amber, (t - 0.5) * 2);
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.35 + value * 0.65;
+      ctx.lineWidth = 2.4;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
   }
   draw();
+}
+
+// Small hex-color interpolator for the radial gradient ring
+function lerpColor(a, b, t) {
+  const pa = hexToRgb(a), pb = hexToRgb(b);
+  if (!pa || !pb) return a;
+  const r = Math.round(pa.r + (pb.r - pa.r) * t);
+  const g = Math.round(pa.g + (pb.g - pa.g) * t);
+  const bl = Math.round(pa.b + (pb.b - pa.b) * t);
+  return `rgb(${r}, ${g}, ${bl})`;
+}
+function hexToRgb(hex) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex.trim());
+  return m ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : null;
+}
+function clearWaveform() {
+  const canvas = document.getElementById('waveformCanvas');
+  if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
 }
 
 // ============================================
@@ -1398,6 +1458,7 @@ function setupIpcListeners() {
           const stream = mediaRecorder.stream;
           stream.getTracks().forEach(t => t.stop());
           cancelAnimationFrame(animFrameId);
+      clearWaveform();
           const btn = document.getElementById('btnMicTest');
           if (btn) btn.classList.remove('recording');
           stopRecordingTimer();
@@ -1425,6 +1486,7 @@ function setupIpcListeners() {
             const stream = mediaRecorder.stream;
             stream.getTracks().forEach(t => t.stop());
             cancelAnimationFrame(animFrameId);
+      clearWaveform();
             const btn = document.getElementById('btnMicTest');
             if (btn) btn.classList.remove('recording');
             stopRecordingTimer();
@@ -1733,3 +1795,13 @@ window.setNativeLanguage = setNativeLanguage;
 window.copyHistoryItem = copyHistoryItem;
 window.retryFailedRecording = retryFailedRecording;
 window.deleteFailedRecording = deleteFailedRecording;
+
+// Pure helpers exposed for the unit tests (harmless in production).
+window.__freesiaTest = {
+  normalizeStats,
+  formatDuration,
+  localDateString,
+  buildSnippetInstructions,
+  expandSnippets,
+  setSettings: (s) => { settings = s; }
+};
