@@ -539,31 +539,90 @@ function cancelDictation() {
   hideOverlay();
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// PowerShell that sends a HARDWARE SCAN-CODE Ctrl+V via SendInput. Virtual-key
+// input (the old SendKeys approach) is ignored by AnyDesk/RDP/Citrix/TeamViewer
+// and many games, which capture keyboard at the raw scan-code level — so their
+// remote sessions never received the paste. Scan-code input is forwarded like a
+// real keypress and also works for ordinary local apps.
+const PASTE_SCANCODE_PS = `
+$ErrorActionPreference = 'Stop'
+$sig = @"
+using System;
+using System.Runtime.InteropServices;
+public class FreesiaKbd {
+  [StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public InputUnion U; }
+  [StructLayout(LayoutKind.Explicit)] struct InputUnion { [FieldOffset(0)] public KEYBDINPUT ki; }
+  [StructLayout(LayoutKind.Sequential)] struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+  [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+  const uint INPUT_KEYBOARD=1; const uint KEYEVENTF_KEYUP=0x0002; const uint KEYEVENTF_SCANCODE=0x0008;
+  static INPUT K(ushort scan, bool up){ var i=new INPUT{ type=INPUT_KEYBOARD }; i.U.ki=new KEYBDINPUT{ wVk=0, wScan=scan, dwFlags=KEYEVENTF_SCANCODE | (up?KEYEVENTF_KEYUP:0), time=0, dwExtraInfo=IntPtr.Zero }; return i; }
+  public static uint Paste(){
+    // LeftCtrl = 0x1D, V = 0x2F (set-1 scan codes)
+    var a = new INPUT[]{ K(0x1D,false), K(0x2F,false), K(0x2F,true), K(0x1D,true) };
+    return SendInput((uint)a.Length, a, Marshal.SizeOf(typeof(INPUT)));
+  }
+}
+"@
+Add-Type -TypeDefinition $sig
+$n = [FreesiaKbd]::Paste()
+if ($n -lt 4) { exit 1 }
+`;
+
+let pasteScriptPath = null;
+function getPasteScriptPath() {
+  if (pasteScriptPath && fs.existsSync(pasteScriptPath)) return pasteScriptPath;
+  const p = path.join(app.getPath('userData'), 'paste-scancode.ps1');
+  fs.writeFileSync(p, PASTE_SCANCODE_PS, 'utf-8');
+  pasteScriptPath = p;
+  return p;
+}
+
+function runPowerShell(args, timeout = 8000) {
+  const { execFile } = require('child_process');
+  return new Promise((resolve) => {
+    execFile('powershell.exe', args, { windowsHide: true, timeout }, (err) => resolve(!err));
+  });
+}
+
+// Preferred: hardware scan-code Ctrl+V (works over AnyDesk/RDP and locally)
+function pasteScancode() {
+  return runPowerShell(['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', getPasteScriptPath()]);
+}
+
+// Fallback: legacy virtual-key SendKeys, for the rare host where SendInput fails
+function pasteSendKeys() {
+  return runPowerShell(['-NoProfile', '-Command', "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^v')"]);
+}
+
 async function injectText(text) {
   const savedClipboard = clipboard.readText();
   clipboard.writeText(text);
 
-  // Simulate Ctrl+V using PowerShell
-  try {
-    const { exec } = require('child_process');
-    await new Promise((resolve, reject) => {
-      exec('powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait(\'^v\')"',
-        { windowsHide: true, timeout: 8000 },
-        (err) => { if (err) reject(err); else resolve(); }
-      );
-    });
-    writeLog('INFO', 'inject', `Pasted ${text.length} chars into the foreground app`);
-  } catch (e) {
-    // Do NOT restore the old clipboard on failure: leave the transcript
-    // there so the user can paste it manually with Ctrl+V.
-    writeLog('ERROR', 'inject', `Paste failed, transcript left in clipboard: ${e.message}`, e.stack);
+  // Let clipboard managers and remote-desktop clients (AnyDesk, RDP) observe
+  // and sync the new clipboard content before we send the paste keystroke,
+  // otherwise the remote side can paste stale content.
+  await sleep(140);
+
+  let ok = await pasteScancode();
+  if (!ok) {
+    writeLog('WARN', 'inject', 'Scan-code paste failed, trying SendKeys fallback');
+    ok = await pasteSendKeys();
+  }
+
+  if (!ok) {
+    // Do NOT restore the old clipboard on failure: leave the transcript there
+    // so the user can paste it manually with Ctrl+V.
+    writeLog('ERROR', 'inject', 'Paste failed; transcript left in clipboard for manual Ctrl+V');
     return false;
   }
 
-  // Restore clipboard after a short delay
+  writeLog('INFO', 'inject', `Pasted ${text.length} chars (scan-code)`);
+  // Restore clipboard after a delay long enough for a remote paste to complete
   setTimeout(() => {
     clipboard.writeText(savedClipboard || '');
-  }, 500);
+  }, 900);
   return true;
 }
 

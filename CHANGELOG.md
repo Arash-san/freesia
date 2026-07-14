@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.2
+
+- Fixed dictation not pasting into AnyDesk (and other remote-desktop clients like RDP/TeamViewer, plus some games): these capture keyboard at the hardware scan-code level and ignore the virtual-key Ctrl+V the app used to send, so their remote session never received the paste and you had to press Ctrl+V yourself. Freesia now sends a hardware scan-code Ctrl+V via SendInput, which is forwarded like a real keystroke (and still works for ordinary local apps). A short delay before pasting also lets the remote client sync the clipboard first, and the old method remains as a fallback.
+
 ## 2.2.1
 
 - Fixed transcription hard-failing when the selected Gemini model returns repeated `Internal error encountered.` (HTTP 500) — commonly a preview model. Transcription now automatically falls back through stable models (gemini-2.5-flash → gemini-2.0-flash → gemini-2.5-flash-lite) instead of retrying the same failing model, so a flaky model no longer stops you from dictating.
