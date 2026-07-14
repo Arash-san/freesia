@@ -368,6 +368,18 @@
           <div class="glass-card settings-card">
             <div class="setting-row">
               <div class="setting-info">
+                <div class="setting-title">Your Styles</div>
+                <div class="setting-desc">Create your own dictation styles, or import one an AI agent made for you (see AGENTS.md)</div>
+              </div>
+              <div class="update-actions">
+                <button class="btn btn-primary btn-sm" id="btnNewStyleSettings">+ New Style</button>
+                <button class="btn btn-secondary btn-sm" id="btnImportStyle">Import</button>
+                <button class="btn btn-ghost btn-sm" id="btnOpenStylesFolder">Folder</button>
+              </div>
+            </div>
+            <div class="divider"></div>
+            <div class="setting-row">
+              <div class="setting-info">
                 <div class="setting-title">Auto-Switch by App</div>
                 <div class="setting-desc">Automatically change dictation style based on the focused application</div>
               </div>
@@ -428,6 +440,42 @@
                 <option value="hi">Hindi</option>
                 <option value="auto">Auto-detect</option>
               </select>
+            </div>
+          </div>
+
+          <div class="section-title">Smart Tools</div>
+          <div class="glass-card settings-card">
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-title">Trim spelled-out words</div>
+                <div class="setting-desc">If you say a name then spell it (e.g. "Arash Ahmadi, A-R-A-S-H…") to help accuracy, keep the correctly spelled word and drop the letters</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="toolTrimSpelling">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="divider"></div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-title">Spoken emojis → emoji</div>
+                <div class="setting-desc">Say "heart emoji", "thumbs up", "fire emoji" and Freesia inserts ❤️ 👍 🔥</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="toolSpokenEmoji">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="divider"></div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-title">Polish & rephrase</div>
+                <div class="setting-desc">Rewrite rough, error-prone speech into clean, well-structured text while keeping your meaning</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="toolPolish">
+                <span class="toggle-slider"></span>
+              </label>
             </div>
           </div>
 
@@ -495,7 +543,7 @@
             <div class="setting-row">
               <div class="setting-info">
                 <div class="setting-title">Freesia</div>
-                <div class="setting-desc" id="appVersionLabel">Version 2.1.0 - MIT License</div>
+                <div class="setting-desc" id="appVersionLabel">Version 2.2.0 - MIT License</div>
               </div>
               <button class="btn btn-ghost btn-sm" id="btnGitHub">
                 GitHub
@@ -516,6 +564,20 @@
                 <button class="btn btn-primary btn-sm" id="btnDownloadUpdate" style="display:none;">Download</button>
                 <button class="btn btn-primary btn-sm" id="btnInstallUpdate" style="display:none;">Restart</button>
               </div>
+            </div>
+          </div>
+
+          <div class="section-title">Privacy & Diagnostics</div>
+          <div class="glass-card settings-card">
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-title">Send error reports to the developer</div>
+                <div class="setting-desc">Off by default. When on, only redacted diagnostics are sent when something breaks — app version, OS, and error details. Never your transcribed text or API key.</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="toggleErrorReporting">
+                <span class="toggle-slider"></span>
+              </label>
             </div>
           </div>
 

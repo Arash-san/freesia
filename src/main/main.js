@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, clipboard, nativeImage, shell, nativeTheme, screen } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, clipboard, nativeImage, shell, nativeTheme, screen, dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
@@ -67,12 +67,14 @@ function writeLog(level, context, message, stack) {
 // Catch main process errors
 process.on('uncaughtException', (err) => {
   writeLog('FATAL', 'main:uncaughtException', err.message, err.stack);
+  try { sendErrorReport({ level: 'FATAL', context: 'main:uncaughtException', message: err.message, stack: err.stack }); } catch (e) { /* never disrupt */ }
   console.error('Uncaught Exception:', err);
 });
 process.on('unhandledRejection', (reason) => {
   const msg = reason instanceof Error ? reason.message : String(reason);
   const stack = reason instanceof Error ? reason.stack : '';
   writeLog('ERROR', 'main:unhandledRejection', msg, stack);
+  try { sendErrorReport({ level: 'ERROR', context: 'main:unhandledRejection', message: msg, stack }); } catch (e) { /* never disrupt */ }
   console.error('Unhandled Rejection:', reason);
 });
 
@@ -111,9 +113,32 @@ const store = new Store({
     activeStyle: 'normal',
     autoStyleSwitch: false,
     styleOverrides: {},
-    keepSuccessRecordings: false
+    keepSuccessRecordings: false,
+    // User-authored dictation styles (merged with the built-ins)
+    customStyles: [],
+    // Opt-in processing tools that shape the formatted output
+    toolTrimSpelling: false,
+    toolSpokenEmoji: false,
+    toolPolish: false,
+    // Opt-in, redacted error reporting to the developer
+    errorReporting: false,
+    // Stable anonymous id so reports from one install group together
+    installId: ''
   }
 });
+
+// Assign a stable anonymous install id once (used only to group reports)
+if (!store.get('installId')) {
+  store.set('installId', require('crypto').randomUUID());
+}
+
+// Where user/agent-authored style files live. Anything valid dropped here
+// is imported on launch. Documented for agents in AGENTS.md.
+function getStylesDir() {
+  const dir = path.join(app.getPath('userData'), 'styles');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
 
 let mainWindow = null;
 let overlayWindow = null;
@@ -736,6 +761,123 @@ ipcMain.handle('delete-failed-recording', async (_, baseName) => {
   if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
   return true;
 });
+
+// Reveal a saved recording in Windows Explorer, with the file selected
+ipcMain.handle('show-recording-in-folder', (_, baseName) => {
+  const audioPath = path.join(getFailedDir(), baseName + '.webm');
+  if (fs.existsSync(audioPath)) {
+    shell.showItemInFolder(audioPath);
+    return true;
+  }
+  // File already cleaned up — just open the folder
+  shell.openPath(getFailedDir());
+  return false;
+});
+
+ipcMain.handle('open-recordings-folder', () => shell.openPath(getFailedDir()));
+
+// ============================================
+// Custom style import (folder + file)
+// ============================================
+function coerceStyle(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const name = String(raw.name || '').trim();
+  const prompt = String(raw.prompt || '').trim();
+  if (!name || !prompt) return null;
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 32) || 'style';
+  return {
+    id: String(raw.id || `custom-${slug}`),
+    name: name.slice(0, 40),
+    icon: String(raw.icon || '✨').slice(0, 4),
+    color: /^#[0-9a-fA-F]{6}$/.test(raw.color || '') ? raw.color : '#A78BFA',
+    description: String(raw.description || '').slice(0, 120),
+    prompt: prompt.slice(0, 4000),
+    custom: true
+  };
+}
+
+// Parse a file's JSON into zero or more styles. Accepts a single style
+// object, an array of styles, or { styles: [...] }.
+function parseStylesFromJson(text) {
+  let data;
+  try { data = JSON.parse(text); } catch (e) { return []; }
+  const list = Array.isArray(data) ? data : Array.isArray(data.styles) ? data.styles : [data];
+  return list.map(coerceStyle).filter(Boolean);
+}
+
+ipcMain.handle('get-styles-dir', () => getStylesDir());
+ipcMain.handle('open-styles-folder', () => shell.openPath(getStylesDir()));
+
+// Scan the styles folder and return every valid style found there
+ipcMain.handle('import-styles-from-disk', () => {
+  const dir = getStylesDir();
+  const out = [];
+  for (const f of fs.readdirSync(dir)) {
+    if (!/\.json$/i.test(f)) continue;
+    try { out.push(...parseStylesFromJson(fs.readFileSync(path.join(dir, f), 'utf-8'))); }
+    catch (e) { writeLog('WARN', 'importStyles', `Bad style file ${f}: ${e.message}`); }
+  }
+  return out;
+});
+
+// Let the user pick a .json style file to import
+ipcMain.handle('import-style-file', async () => {
+  const res = await dialog.showOpenDialog(mainWindow, {
+    title: 'Import Freesia style',
+    filters: [{ name: 'Freesia style', extensions: ['json'] }],
+    properties: ['openFile', 'multiSelections']
+  });
+  if (res.canceled) return [];
+  const out = [];
+  for (const file of res.filePaths) {
+    try { out.push(...parseStylesFromJson(fs.readFileSync(file, 'utf-8'))); }
+    catch (e) { writeLog('WARN', 'importStyleFile', `${file}: ${e.message}`); }
+  }
+  return out;
+});
+
+// ============================================
+// Opt-in, redacted error reporting
+// ============================================
+const REPORT_ENDPOINT = 'https://inquirelab.ai/freesia/report';
+
+// Send a single redacted report. Never includes transcribed text or the
+// API key — only diagnostics. No-op unless the user turned reporting on.
+async function sendErrorReport({ level, context, message, stack }) {
+  if (!store.get('errorReporting')) return false;
+  try {
+    const payload = {
+      installId: store.get('installId') || 'unknown',
+      appVersion: app.getVersion(),
+      platform: `${process.platform} ${process.arch}`,
+      osRelease: require('os').release(),
+      level: String(level || 'ERROR').slice(0, 16),
+      context: String(context || '').slice(0, 120),
+      // Guard against an API key ever leaking into a message/stack
+      message: redact(String(message || '')).slice(0, 2000),
+      stack: redact(String(stack || '')).slice(0, 6000),
+      ts: new Date().toISOString()
+    };
+    const res = await fetch(REPORT_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(8000)
+    });
+    return res.ok;
+  } catch (e) {
+    // Reporting must never disrupt the app
+    writeLog('WARN', 'errorReport', `Failed to send report: ${e.message}`);
+    return false;
+  }
+}
+
+// Strip anything resembling a Gemini API key from outgoing text
+function redact(s) {
+  return s.replace(/AIza[0-9A-Za-z_\-]{10,}/g, 'AIza…[redacted]');
+}
+
+ipcMain.handle('send-error-report', (_, report) => sendErrorReport(report || {}));
 
 // App lifecycle
 app.whenReady().then(() => {

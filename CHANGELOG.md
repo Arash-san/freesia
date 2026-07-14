@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.0
+
+- Saved recordings now have a **Show in folder** button that opens Windows Explorer with the file selected.
+- Added opt-in **Smart Tools** that shape your dictation: trim spelled-out words (say a name then spell it to help accuracy, and the letters are dropped), spoken emojis → real emoji, and polish & rephrase rough speech. Each is an independent on/off switch in Settings.
+- You can now **create your own dictation styles** (name, icon, color, and AI instructions) alongside the built-ins, and edit or delete them.
+- Styles can be **imported**: drop a JSON style file into the styles folder (Settings → Your Styles → Folder) or use Import. A new `AGENTS.md` documents the format so an AI agent can generate a style for you and Freesia will pick it up.
+- Added **opt-in, redacted error reporting** (off by default). When enabled, only diagnostics are sent when something breaks — app version, OS, and error details — never your transcribed text or API key. This gives a central place to diagnose issues users hit.
+
 ## 2.1.0
 
 - Fundamentally redesigned the interface around a single voice "bloom": the microphone is now a large glowing centrepiece with a radial waveform that blooms outward as you speak. Replaced the left sidebar with a centered segmented top navigation, added capsule stat pods, a lifetime ribbon, and faint botanical corner art.

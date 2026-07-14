@@ -67,6 +67,8 @@ function logError(context, error) {
   api.setSetting('errorLog', errorLog);
   // Write to persistent log file
   api.logToFile('ERROR', context, entry.message, entry.stack);
+  // Fire-and-forget opt-in report (main process no-ops unless enabled)
+  api.sendErrorReport?.({ level: 'ERROR', context, message: entry.message, stack: entry.stack });
 }
 
 // ============================================
@@ -176,6 +178,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderStyleGrid();
   renderAppRules();
   loadFailedRecordings();
+  loadStylesFromDisk();
   // Place the segmented-nav highlight once the top bar has laid out
   requestAnimationFrame(positionNavIndicator);
 });
@@ -270,6 +273,20 @@ function bindEvents() {
   document.getElementById('toggleKeepRecordings')?.addEventListener('change', (e) => saveSetting('keepSuccessRecordings', e.target.checked));
   document.getElementById('toggleOverlay')?.addEventListener('change', (e) => saveSetting('showOverlay', e.target.checked));
   document.getElementById('toggleSounds')?.addEventListener('change', (e) => saveSetting('sounds', e.target.checked));
+
+  // Processing tools
+  document.getElementById('toolTrimSpelling')?.addEventListener('change', (e) => saveSetting('toolTrimSpelling', e.target.checked));
+  document.getElementById('toolSpokenEmoji')?.addEventListener('change', (e) => saveSetting('toolSpokenEmoji', e.target.checked));
+  document.getElementById('toolPolish')?.addEventListener('change', (e) => saveSetting('toolPolish', e.target.checked));
+
+  // Error reporting + folders
+  document.getElementById('toggleErrorReporting')?.addEventListener('change', (e) => {
+    saveSetting('errorReporting', e.target.checked);
+    showToast(e.target.checked ? 'Error reporting on — thank you 🌸' : 'Error reporting off', 'info');
+  });
+  document.getElementById('btnImportStyle')?.addEventListener('click', importStyleFile);
+  document.getElementById('btnOpenStylesFolder')?.addEventListener('click', () => api.openStylesFolder?.());
+  document.getElementById('btnNewStyleSettings')?.addEventListener('click', () => openStyleEditor());
   document.getElementById('btnGitHub')?.addEventListener('click', () => api.openExternal('https://github.com/arash-san/freesia'));
   document.getElementById('btnCheckUpdates')?.addEventListener('click', checkForUpdates);
   document.getElementById('btnDownloadUpdate')?.addEventListener('click', downloadUpdate);
@@ -544,7 +561,8 @@ async function resetAllSettings() {
   if (!confirm('Are you sure? This will clear your API key, dictionary, snippets, history, and all settings.')) return;
   const keys = ['apiKey', 'onboarded', 'geminiModel', 'aiFormatting', 'language', 'theme',
     'autoLaunch', 'showOverlay', 'sounds', 'keepSuccessRecordings', 'dictionary', 'snippets',
-    'history', 'stats', 'errorLog'];
+    'history', 'stats', 'errorLog', 'customStyles', 'toolTrimSpelling', 'toolSpokenEmoji',
+    'toolPolish', 'errorReporting', 'activeStyle', 'autoStyleSwitch', 'styleOverrides'];
   for (const k of keys) await api.setSetting(k, undefined);
   settings = await api.getSettings();
   availableModels = [];
@@ -576,6 +594,14 @@ function updateSettingsUI() {
   if (ov) ov.checked = settings.showOverlay !== false;
   const snd = document.getElementById('toggleSounds');
   if (snd) snd.checked = settings.sounds !== false;
+  const tts = document.getElementById('toolTrimSpelling');
+  if (tts) tts.checked = !!settings.toolTrimSpelling;
+  const tse = document.getElementById('toolSpokenEmoji');
+  if (tse) tse.checked = !!settings.toolSpokenEmoji;
+  const tp = document.getElementById('toolPolish');
+  if (tp) tp.checked = !!settings.toolPolish;
+  const er = document.getElementById('toggleErrorReporting');
+  if (er) er.checked = !!settings.errorReporting;
 }
 
 function applyTheme(themeInfo = {}) {
@@ -1187,9 +1213,9 @@ async function processAudio(audioBlob, mode) {
       }
 
       let finalText = rawText;
-      if (settings.aiFormatting !== false) {
-        // Snippet expansion is handled inside the AI prompt so the model
-        // can judge intent (deliberate sign-off vs. casual "thank you").
+      if (settings.aiFormatting !== false || anyToolEnabled()) {
+        // Snippet expansion and the opt-in tools are handled inside the AI
+        // prompt so the model can judge intent and apply spelling/emoji/polish.
         finalText = await formatWithAI(rawText, mode);
       } else {
         // No AI available: conservative word-boundary expansion on the
@@ -1294,15 +1320,38 @@ function buildSnippetInstructions() {
     `4. When in doubt, do not expand.`;
 }
 
+// Whether any opt-in processing tool is active
+function anyToolEnabled() {
+  return !!(settings.toolTrimSpelling || settings.toolSpokenEmoji || settings.toolPolish);
+}
+
+// Instructions appended to the formatting prompt for each enabled tool
+function buildToolInstructions() {
+  const parts = [];
+  if (settings.toolTrimSpelling) {
+    parts.push('SPELLING CLEANUP: When the speaker says a word or name and then spells it out letter by letter to help transcription (for example "Arash Ahmadi, A R A S H A H M A D I" or "A-R-A-S-H"), use the spelling ONLY to get the correct spelling of that word, then REMOVE the spelled-out letters from the output. Keep the word spelled correctly; never leave the individual letters in the text.');
+  }
+  if (settings.toolSpokenEmoji) {
+    parts.push('SPOKEN EMOJI: When the speaker names an emoji (for example "smiley face", "heart emoji", "thumbs up", "fire emoji"), replace that phrase with the actual emoji character (🙂, ❤️, 👍, 🔥, etc.), whether it appears at the end or in the middle of a sentence. Only replace clear emoji references, not ordinary words.');
+  }
+  if (settings.toolPolish) {
+    parts.push('POLISH & REPHRASE: The speech may be rough, with false starts, repetitions, or grammatical errors. Rewrite it into clear, well-structured, natural writing while preserving the speaker\'s meaning, intent, and key details exactly. Do not add new information.');
+  }
+  if (parts.length === 0) return '';
+  return '\n\nEnabled tools — apply all of these:\n- ' + parts.join('\n- ');
+}
+
 async function formatWithAI(rawText, mode) {
   const dictWords = (settings.dictionary || []).join(', ');
   const dictInstructions = dictWords ? `\nPreserve these custom words exactly: ${dictWords}` : '';
 
   // Get active style
   const style = getActiveStyle();
+  const toolInstructions = buildToolInstructions();
 
-  // If verbatim style (no AI formatting), return raw text
-  if (style.id === 'verbatim' && mode !== 'command') return rawText;
+  // Verbatim style skips formatting — unless the user turned on tools that
+  // need the model (spelling cleanup, spoken emoji, polish).
+  if (style.id === 'verbatim' && mode !== 'command' && !toolInstructions) return rawText;
 
   const snippetInstructions = buildSnippetInstructions();
   const noInventions = '\nDo NOT invent content the speaker did not say: no added greetings, no added sign-offs, no added names or signatures unless the speaker dictated them or deliberately used a snippet trigger.';
@@ -1311,13 +1360,15 @@ async function formatWithAI(rawText, mode) {
   if (mode === 'command') {
     prompt = `You are a text editor. The user selected text and gave a voice command. Execute the command on the text and return ONLY the result.\n\nVoice command and context: "${rawText}"\n\nReturn only the edited text.`;
   } else {
-    // Use style-specific prompt
-    const stylePrompt = style.prompt || 'Clean up this dictation into polished text.';
+    // Verbatim + tools: keep the words as spoken, only apply the tools
+    const stylePrompt = (style.id === 'verbatim')
+      ? 'Return the dictation exactly as spoken, changing nothing except what the enabled tools below require.'
+      : (style.prompt || 'Clean up this dictation into polished text.');
     let langNote = '';
     if (style.id === 'native') {
       langNote = '\nIMPORTANT: The output must be in English. Ensure natural, fluent English text.';
     }
-    prompt = `${stylePrompt}${langNote}${noInventions}${dictInstructions}${snippetInstructions}\n\nRaw transcript: "${rawText}"\n\nReturn ONLY the formatted text, nothing else.`;
+    prompt = `${stylePrompt}${langNote}${noInventions}${dictInstructions}${snippetInstructions}${toolInstructions}\n\nRaw transcript: "${rawText}"\n\nReturn ONLY the formatted text, nothing else.`;
   }
 
   try {
@@ -1536,23 +1587,38 @@ function escapeHtml(str) {
 // ============================================
 // Dictation Styles
 // ============================================
+// Built-in styles plus any the user (or an agent) created
+function getAllStyles() {
+  const builtIn = window.BUILT_IN_STYLES || [];
+  const custom = settings.customStyles || [];
+  return [...builtIn, ...custom];
+}
+
 function getActiveStyle() {
-  const styles = window.BUILT_IN_STYLES || [];
+  const styles = getAllStyles();
   return styles.find(s => s.id === activeStyleId) || styles[0] || { id: 'normal', name: 'Normal', prompt: null };
 }
 
 function renderStyleGrid() {
   const grid = document.getElementById('styleGrid');
   if (!grid) return;
-  const styles = window.BUILT_IN_STYLES || [];
+  const styles = getAllStyles();
 
   let html = styles.map(s => `
-    <div class="style-chip ${s.id === activeStyleId ? 'active' : ''}" onclick="selectStyle('${s.id}')">
+    <div class="style-chip ${s.id === activeStyleId ? 'active' : ''} ${s.custom ? 'is-custom' : ''}" onclick="selectStyle('${s.id}')">
       <span class="style-chip-icon">${s.icon}</span>
-      <span class="style-chip-name">${s.name}</span>
-      <span class="style-chip-color" style="background: ${s.color};"></span>
+      <span class="style-chip-name">${escapeHtml(s.name)}</span>
+      ${s.custom
+        ? `<span class="style-chip-edit" title="Edit style" onclick="event.stopPropagation(); editCustomStyle('${s.id}')">✎</span>`
+        : `<span class="style-chip-color" style="background: ${s.color};"></span>`}
     </div>
   `).join('');
+
+  // Trailing "create a style" chip
+  html += `<div class="style-chip style-chip-add" onclick="openStyleEditor()" title="Create a custom style">
+      <span class="style-chip-icon">＋</span>
+      <span class="style-chip-name">New Style</span>
+    </div>`;
 
   // Add native language picker when native style is active
   const active = getActiveStyle();
@@ -1597,6 +1663,156 @@ async function selectStyle(styleId) {
   renderStyleGrid();
   const style = getActiveStyle();
   showToast(`Style: ${style.icon} ${style.name}`, 'success');
+}
+
+// ============================================
+// Custom style editor
+// ============================================
+const STYLE_EMOJI_CHOICES = ['✨','🗣️','📧','🎓','⌨️','✍️','📋','📱','⚕️','📌','💬','📝','🌸','🎨','🧠','⚡','📣','🪄'];
+
+function openStyleEditor(existing = null) {
+  // Remove any prior editor
+  document.getElementById('styleEditorBackdrop')?.remove();
+
+  const s = existing || { icon: '✨', color: '#A78BFA', name: '', description: '', prompt: '' };
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.id = 'styleEditorBackdrop';
+  backdrop.innerHTML = `
+    <div class="modal glass-card" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h3 class="heading-md">${existing ? 'Edit Style' : 'New Style'}</h3>
+        <button class="icon-btn" id="styleEditorClose" title="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="input-group">
+          <label>Name</label>
+          <input type="text" class="input" id="styleName" maxlength="40" placeholder="e.g. Slack replies" value="${escapeHtml(s.name)}">
+        </div>
+        <div class="input-group" style="margin-top: var(--space-md);">
+          <label>Icon</label>
+          <div class="emoji-picker" id="styleEmojiPicker">
+            ${STYLE_EMOJI_CHOICES.map(e => `<button type="button" class="emoji-choice ${e === s.icon ? 'selected' : ''}" data-emoji="${e}">${e}</button>`).join('')}
+          </div>
+        </div>
+        <div class="input-group" style="margin-top: var(--space-md);">
+          <label>Accent color</label>
+          <input type="color" class="color-input" id="styleColor" value="${/^#[0-9a-fA-F]{6}$/.test(s.color) ? s.color : '#A78BFA'}">
+        </div>
+        <div class="input-group" style="margin-top: var(--space-md);">
+          <label>Short description (optional)</label>
+          <input type="text" class="input" id="styleDesc" maxlength="120" placeholder="When to use it" value="${escapeHtml(s.description || '')}">
+        </div>
+        <div class="input-group" style="margin-top: var(--space-md);">
+          <label>Instructions for the AI</label>
+          <textarea class="input" id="stylePrompt" rows="5" placeholder="Describe exactly how Freesia should format the dictation in this style...">${escapeHtml(s.prompt || '')}</textarea>
+          <p class="text-muted text-sm" style="margin-top:6px;">This is sent to Gemini to shape your text. Be specific: tone, punctuation, length, what to keep or drop.</p>
+        </div>
+      </div>
+      <div class="modal-foot">
+        ${existing ? `<button class="btn btn-danger btn-sm" id="styleEditorDelete">Delete</button>` : '<span></span>'}
+        <div class="flex gap-sm">
+          <button class="btn btn-ghost" id="styleEditorCancel">Cancel</button>
+          <button class="btn btn-primary" id="styleEditorSave">${existing ? 'Save' : 'Create'}</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+
+  let chosenEmoji = s.icon || '✨';
+  backdrop.querySelectorAll('.emoji-choice').forEach(btn => {
+    btn.addEventListener('click', () => {
+      chosenEmoji = btn.dataset.emoji;
+      backdrop.querySelectorAll('.emoji-choice').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+    });
+  });
+
+  const close = () => backdrop.remove();
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+  document.getElementById('styleEditorClose').addEventListener('click', close);
+  document.getElementById('styleEditorCancel').addEventListener('click', close);
+  if (existing) {
+    document.getElementById('styleEditorDelete').addEventListener('click', () => deleteCustomStyle(existing.id));
+  }
+  document.getElementById('styleEditorSave').addEventListener('click', () => {
+    const name = document.getElementById('styleName').value.trim();
+    const prompt = document.getElementById('stylePrompt').value.trim();
+    if (!name || !prompt) { showToast('Give the style a name and instructions', 'error'); return; }
+    saveCustomStyle({
+      id: existing?.id,
+      name,
+      icon: chosenEmoji,
+      color: document.getElementById('styleColor').value,
+      description: document.getElementById('styleDesc').value.trim(),
+      prompt
+    });
+  });
+}
+
+function editCustomStyle(id) {
+  const style = (settings.customStyles || []).find(s => s.id === id);
+  if (style) openStyleEditor(style);
+}
+
+async function saveCustomStyle(style) {
+  const list = settings.customStyles || [];
+  const id = style.id || `custom-${Date.now()}`;
+  const record = { ...style, id, custom: true };
+  const idx = list.findIndex(s => s.id === id);
+  if (idx !== -1) list[idx] = record; else list.push(record);
+  await saveSetting('customStyles', list);
+  settings.customStyles = list;
+  document.getElementById('styleEditorBackdrop')?.remove();
+  activeStyleId = id;
+  await saveSetting('activeStyle', id);
+  renderStyleGrid();
+  showToast(`Style "${record.name}" saved`, 'success');
+}
+
+async function deleteCustomStyle(id) {
+  if (!confirm('Delete this custom style?')) return;
+  const list = (settings.customStyles || []).filter(s => s.id !== id);
+  await saveSetting('customStyles', list);
+  settings.customStyles = list;
+  if (activeStyleId === id) { activeStyleId = 'normal'; await saveSetting('activeStyle', 'normal'); }
+  document.getElementById('styleEditorBackdrop')?.remove();
+  renderStyleGrid();
+  showToast('Style deleted', 'info');
+}
+
+// Merge in styles that came from disk files or an import, de-duped by id
+async function mergeImportedStyles(incoming, sourceLabel) {
+  if (!incoming || incoming.length === 0) return 0;
+  const list = settings.customStyles || [];
+  const byId = new Map(list.map(s => [s.id, s]));
+  let added = 0;
+  for (const st of incoming) {
+    const record = { ...st, custom: true };
+    if (!byId.has(record.id)) added++;
+    byId.set(record.id, record);
+  }
+  const merged = [...byId.values()];
+  await saveSetting('customStyles', merged);
+  settings.customStyles = merged;
+  renderStyleGrid();
+  if (added > 0 && sourceLabel) showToast(`Imported ${added} style${added === 1 ? '' : 's'} from ${sourceLabel}`, 'success');
+  return added;
+}
+
+// On launch, pick up any style files dropped in the styles folder
+async function loadStylesFromDisk() {
+  try {
+    const found = await api.importStylesFromDisk?.();
+    if (found && found.length) await mergeImportedStyles(found, null);
+  } catch (e) { logError('loadStylesFromDisk', e); }
+}
+
+async function importStyleFile() {
+  try {
+    const found = await api.importStyleFile?.();
+    await mergeImportedStyles(found, 'file');
+  } catch (e) { logError('importStyleFile', e); showToast('Import failed', 'error'); }
 }
 
 async function detectAndApplyAutoStyle() {
@@ -1716,6 +1932,7 @@ function renderFailedRecordings(recordings) {
         </div>
         <div class="failed-recording-actions">
           <button class="btn btn-primary btn-sm" onclick="retryFailedRecording('${escapeHtml(r.baseName)}')">${isSuccess ? 'Process Again' : 'Retry'}</button>
+          <button class="btn btn-secondary btn-sm" onclick="showRecordingInFolder('${escapeHtml(r.baseName)}')" title="Show the file in Windows Explorer">📂 Folder</button>
           <button class="btn btn-ghost btn-sm" onclick="deleteFailedRecording('${escapeHtml(r.baseName)}')">Delete</button>
         </div>
       </div>
@@ -1795,6 +2012,10 @@ window.setNativeLanguage = setNativeLanguage;
 window.copyHistoryItem = copyHistoryItem;
 window.retryFailedRecording = retryFailedRecording;
 window.deleteFailedRecording = deleteFailedRecording;
+window.showRecordingInFolder = async (baseName) => { try { await api.showRecordingInFolder(baseName); } catch (e) { logError('showRecordingInFolder', e); } };
+window.openStyleEditor = openStyleEditor;
+window.editCustomStyle = editCustomStyle;
+window.deleteCustomStyle = deleteCustomStyle;
 
 // Pure helpers exposed for the unit tests (harmless in production).
 window.__freesiaTest = {
@@ -1802,6 +2023,9 @@ window.__freesiaTest = {
   formatDuration,
   localDateString,
   buildSnippetInstructions,
+  buildToolInstructions,
+  anyToolEnabled,
   expandSnippets,
+  getAllStyles,
   setSettings: (s) => { settings = s; }
 };

@@ -62,3 +62,31 @@ test('fallback expandSnippets only fires on whole-word triggers', async () => {
   assert.equal(expand('kind regards to you'), 'kind REGARDS to you', 'whole word expands');
   assert.equal(expand('disregarding that'), 'disregarding that', 'substring inside a word must not expand');
 });
+
+test('processing tools only inject instructions when enabled', async () => {
+  const { window } = await boot();
+  const t = window.__freesiaTest;
+  t.setSettings({});
+  assert.equal(t.anyToolEnabled(), false);
+  assert.equal(t.buildToolInstructions(), '');
+
+  t.setSettings({ toolTrimSpelling: true });
+  assert.equal(t.anyToolEnabled(), true);
+  assert.match(t.buildToolInstructions(), /SPELLING CLEANUP/);
+  assert.doesNotMatch(t.buildToolInstructions(), /SPOKEN EMOJI/);
+
+  t.setSettings({ toolSpokenEmoji: true, toolPolish: true });
+  const both = t.buildToolInstructions();
+  assert.match(both, /SPOKEN EMOJI/);
+  assert.match(both, /POLISH & REPHRASE/);
+});
+
+test('custom styles merge with the built-ins', async () => {
+  const { window } = await boot();
+  const t = window.__freesiaTest;
+  const builtinCount = t.getAllStyles().length;
+  t.setSettings({ customStyles: [{ id: 'custom-x', name: 'My Style', icon: '🌸', color: '#8B5CF6', prompt: 'do the thing', custom: true }] });
+  const all = t.getAllStyles();
+  assert.equal(all.length, builtinCount + 1);
+  assert.ok(all.find(s => s.id === 'custom-x'));
+});

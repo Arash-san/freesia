@@ -52,6 +52,17 @@ contextBridge.exposeInMainWorld('freesia', {
   getFailedRecordings: () => ipcRenderer.invoke('get-failed-recordings'),
   getFailedRecordingData: (filename) => ipcRenderer.invoke('get-failed-recording-data', filename),
   deleteFailedRecording: (baseName) => ipcRenderer.invoke('delete-failed-recording', baseName),
+  showRecordingInFolder: (baseName) => ipcRenderer.invoke('show-recording-in-folder', baseName),
+  openRecordingsFolder: () => ipcRenderer.invoke('open-recordings-folder'),
+
+  // Custom styles
+  getStylesDir: () => ipcRenderer.invoke('get-styles-dir'),
+  openStylesFolder: () => ipcRenderer.invoke('open-styles-folder'),
+  importStylesFromDisk: () => ipcRenderer.invoke('import-styles-from-disk'),
+  importStyleFile: () => ipcRenderer.invoke('import-style-file'),
+
+  // Opt-in error reporting
+  sendErrorReport: (report) => ipcRenderer.invoke('send-error-report', report),
 
   // Foreground app detection
   getForegroundApp: () => ipcRenderer.invoke('get-foreground-app'),
