@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.1
+
+- Fixed transcription hard-failing when the selected Gemini model returns repeated `Internal error encountered.` (HTTP 500) — commonly a preview model. Transcription now automatically falls back through stable models (gemini-2.5-flash → gemini-2.0-flash → gemini-2.5-flash-lite) instead of retrying the same failing model, so a flaky model no longer stops you from dictating.
+- Error reports and the saved-recording error now include the model, HTTP status, and audio size (e.g. `[model=…, http=500, audio=1.2MB]`) so future issues are diagnosable at a glance.
+
 ## 2.2.0
 
 - Saved recordings now have a **Show in folder** button that opens Windows Explorer with the file selected.

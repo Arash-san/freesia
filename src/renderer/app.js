@@ -31,6 +31,14 @@ const PREFERRED_GEMINI_MODELS = [
   'gemini-2.5-flash-lite',
   'gemini-2.5-flash'
 ];
+// Stable, widely-available audio-capable models used as a fallback when the
+// user's selected model keeps failing (e.g. a preview model returning
+// "Internal error encountered." / HTTP 500). Ordered most-reliable-first.
+const TRANSCRIBE_FALLBACK_MODELS = [
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-2.5-flash-lite'
+];
 const BLOCKED_MODEL_ID_PATTERNS = [
   'embedding',
   'aqa',
@@ -444,6 +452,13 @@ function getSelectedModel() {
     return settings.geminiModel;
   }
   return DEFAULT_GEMINI_MODEL;
+}
+
+// The ordered list of models transcription will try: the user's pick first,
+// then stable fallbacks, de-duplicated. Ensures a flaky/preview model can't
+// hard-fail transcription.
+function buildTranscribeModels(primary) {
+  return [...new Set([primary, ...TRANSCRIBE_FALLBACK_MODELS].filter(Boolean))];
 }
 
 async function fetchAvailableModels() {
@@ -1151,23 +1166,28 @@ async function processAudio(audioBlob, mode) {
 
   if (outputEl) outputEl.innerHTML = `<span class="spinner"></span> Transcribing ${duration} of audio...`;
 
-  // ── STEP 3: Attempt transcription with retries ──
-  const MAX_RETRIES = 3;
-  const RETRY_DELAYS = [2000, 5000, 10000];
+  // ── STEP 3: Attempt transcription, rotating to stable fallback models ──
+  // The user's selected model is tried first; if it keeps failing (a preview
+  // model returning HTTP 500 "Internal error encountered." is the common case),
+  // later attempts fall back to known-reliable models instead of hammering the
+  // same broken one.
+  const primaryModel = getSelectedModel();
+  const transcribeModels = buildTranscribeModels(primaryModel);
+  const MAX_RETRIES = transcribeModels.length - 1;
+  const RETRY_DELAYS = [1200, 2500, 5000, 8000];
   let lastError = null;
   let success = false;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const model = transcribeModels[Math.min(attempt, transcribeModels.length - 1)];
     try {
       if (attempt > 0) {
-        const delay = RETRY_DELAYS[attempt - 1] || 10000;
-        if (outputEl) outputEl.innerHTML = `<span class="spinner"></span> Retry ${attempt}/${MAX_RETRIES} in ${Math.round(delay / 1000)}s...`;
-        showToast(`Retrying transcription (${attempt}/${MAX_RETRIES})...`, 'info');
+        const delay = RETRY_DELAYS[attempt - 1] || 8000;
+        if (outputEl) outputEl.innerHTML = `<span class="spinner"></span> Retrying with ${escapeHtml(model)}…`;
+        showToast(`Retrying transcription with ${model}…`, 'info');
         await new Promise(r => setTimeout(r, delay));
-        if (outputEl) outputEl.innerHTML = '<span class="spinner"></span> Retrying transcription...';
       }
 
-      const model = getSelectedModel();
       const transcriptResponse = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${settings.apiKey}`,
         {
@@ -1196,7 +1216,11 @@ async function processAudio(audioBlob, mode) {
 
       if (!transcriptResponse.ok) {
         const err = await transcriptResponse.json().catch(() => ({}));
-        throw new Error(err.error?.message || `Transcription failed (HTTP ${transcriptResponse.status})`);
+        const apiMsg = err.error?.message || `HTTP ${transcriptResponse.status}`;
+        // Include model + status + audio size so error reports are actionable
+        const detailed = new Error(`${apiMsg} [model=${model}, http=${transcriptResponse.status}, audio=${audioSizeMB}MB]`);
+        detailed.httpStatus = transcriptResponse.status;
+        throw detailed;
       }
 
       const transcriptData = await transcriptResponse.json();
@@ -1270,11 +1294,14 @@ async function processAudio(audioBlob, mode) {
 
     } catch (e) {
       lastError = e;
-      logError(`processAudio (attempt ${attempt + 1}/${MAX_RETRIES + 1})`, e);
+      logError(`processAudio (attempt ${attempt + 1}/${MAX_RETRIES + 1}, model ${model})`, e);
       const msg = (e.message || '').toLowerCase();
-      if (['api key', 'api_key', 'quota', 'permission', 'forbidden'].some(t => msg.includes(t))) break;
+      // Stop early only on errors that no model switch or retry can fix.
+      // Server errors (5xx / "internal error") fall through so the next
+      // attempt tries a different, more reliable model.
+      if (['api key', 'api_key', 'quota', 'invalid argument'].some(t => msg.includes(t))) break;
       if (attempt < MAX_RETRIES) {
-        showToast(`Transcription failed, retrying (${attempt + 1}/${MAX_RETRIES})...`, 'error');
+        showToast(`Transcription failed, trying another model…`, 'error');
       }
     }
   }
@@ -2027,5 +2054,7 @@ window.__freesiaTest = {
   anyToolEnabled,
   expandSnippets,
   getAllStyles,
+  buildTranscribeModels,
+  TRANSCRIBE_FALLBACK_MODELS,
   setSettings: (s) => { settings = s; }
 };

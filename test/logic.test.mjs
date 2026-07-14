@@ -81,6 +81,21 @@ test('processing tools only inject instructions when enabled', async () => {
   assert.match(both, /POLISH & REPHRASE/);
 });
 
+test('transcription falls back from a flaky model to stable ones', async () => {
+  const { window } = await boot();
+  const t = window.__freesiaTest;
+  // A preview model (the crash Sara hit) must be tried first, then fall back
+  const list = t.buildTranscribeModels('gemini-3.1-flash-lite-preview');
+  assert.equal(list[0], 'gemini-3.1-flash-lite-preview', 'user model tried first');
+  assert.ok(list.length > 1, 'has fallbacks so a broken model cannot hard-fail');
+  for (const m of t.TRANSCRIBE_FALLBACK_MODELS) assert.ok(list.includes(m));
+
+  // If the user already picked a stable model, it is not duplicated
+  const list2 = t.buildTranscribeModels('gemini-2.5-flash');
+  assert.equal(new Set(list2).size, list2.length, 'no duplicate models');
+  assert.equal(list2[0], 'gemini-2.5-flash');
+});
+
 test('custom styles merge with the built-ins', async () => {
   const { window } = await boot();
   const t = window.__freesiaTest;

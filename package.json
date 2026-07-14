@@ -1,6 +1,6 @@
 {
   "name": "freesia",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Freesia - free, open-source AI voice dictation for Windows. Speak freely. Write beautifully.",
   "main": "src/main/main.js",
   "license": "MIT",
