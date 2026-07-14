@@ -605,10 +605,12 @@ async function injectText(text) {
   // otherwise the remote side can paste stale content.
   await sleep(140);
 
+  let method = 'scan-code';
   let ok = await pasteScancode();
   if (!ok) {
     writeLog('WARN', 'inject', 'Scan-code paste failed, trying SendKeys fallback');
     ok = await pasteSendKeys();
+    method = 'SendKeys-fallback';
   }
 
   if (!ok) {
@@ -618,7 +620,7 @@ async function injectText(text) {
     return false;
   }
 
-  writeLog('INFO', 'inject', `Pasted ${text.length} chars (scan-code)`);
+  writeLog('INFO', 'inject', `Pasted ${text.length} chars (${method})`);
   // Restore clipboard after a delay long enough for a remote paste to complete
   setTimeout(() => {
     clipboard.writeText(savedClipboard || '');
