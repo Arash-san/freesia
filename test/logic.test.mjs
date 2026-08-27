@@ -81,19 +81,43 @@ test('processing tools only inject instructions when enabled', async () => {
   assert.match(both, /POLISH & REPHRASE/);
 });
 
-test('transcription falls back from a flaky model to stable ones', async () => {
+test('transcription uses stable models discovered for the user, not legacy forced fallbacks', async () => {
   const { window } = await boot();
   const t = window.__freesiaTest;
-  // A preview model (the crash Sara hit) must be tried first, then fall back
-  const list = t.buildTranscribeModels('gemini-3.1-flash-lite-preview');
-  assert.equal(list[0], 'gemini-3.1-flash-lite-preview', 'user model tried first');
-  assert.ok(list.length > 1, 'has fallbacks so a broken model cannot hard-fail');
-  for (const m of t.TRANSCRIBE_FALLBACK_MODELS) assert.ok(list.includes(m));
+  const discovered = [
+    { id: 'gemini-3.7-flash' },
+    { id: 'gemini-3.6-flash' },
+    { id: 'gemini-3.5-flash-lite' },
+    { id: 'gemini-3.1-pro-preview' }
+  ];
+  const list = t.buildTranscribeModels('gemini-3.7-flash', discovered);
+  assert.deepEqual(Array.from(list), ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite']);
+  assert.ok(!list.some(m => m.startsWith('gemini-2.')), 'does not inject inaccessible 2.x models');
+  assert.ok(!list.some(m => m.includes('preview')), 'does not use preview models as fallbacks');
+});
 
-  // If the user already picked a stable model, it is not duplicated
-  const list2 = t.buildTranscribeModels('gemini-2.5-flash');
-  assert.equal(new Set(list2).size, list2.length, 'no duplicate models');
-  assert.equal(list2[0], 'gemini-2.5-flash');
+test('transcription has current stable emergency fallbacks when discovery is unavailable', async () => {
+  const { window } = await boot();
+  const t = window.__freesiaTest;
+  const list = t.buildTranscribeModels('gemini-3.7-flash', []);
+  assert.equal(list[0], 'gemini-3.7-flash');
+  assert.equal(new Set(list).size, list.length, 'no duplicate models');
+  assert.ok(list.length <= 4, 'retry count stays bounded');
+  for (const m of t.TRANSCRIBE_FALLBACK_MODELS) assert.ok(list.includes(m));
+  assert.ok(!list.some(m => m.startsWith('gemini-2.')), 'emergency list has no legacy 2.x model');
+});
+
+test('failed transcription labels fallback errors without implying the user selected them', async () => {
+  const { window } = await boot();
+  const summarize = window.__freesiaTest.summarizeTranscriptionFailure;
+  const summary = summarize(
+    new Error('Model unavailable [model=gemini-3.6-flash, http=404]'),
+    'gemini-3.7-flash',
+    ['gemini-3.7-flash', 'gemini-3.6-flash']
+  );
+  assert.match(summary, /Selected model gemini-3\.7-flash/);
+  assert.match(summary, /1 fallback model failed/);
+  assert.match(summary, /Last fallback error.*gemini-3\.6-flash/);
 });
 
 test('custom styles merge with the built-ins', async () => {

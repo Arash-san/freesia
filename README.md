@@ -35,7 +35,7 @@ Upgrading from Dictaloom? Freesia automatically migrates your API key, dictionar
 - System-wide dictation shortcut for typing into any Windows app
 - Always-on-top floating overlay that follows your cursor's display
 - Command mode for voice-driven edits to selected text
-- Gemini 3.1 Flash-Lite by default, with filtered model selection for dictation-safe text output models
+- Gemini 3.5 Flash-Lite by default, with filtered model selection for dictation-safe text output models
 - Personal dictionary for names, technical terms, and custom vocabulary
 - Context-aware voice snippets — triggers expand only when you clearly mean them, so a casual "thank you" never inserts your formal signature
 - Rich stats: words, time saved, and sessions for today and all-time, plus day streaks and average words per session

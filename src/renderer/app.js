@@ -23,21 +23,21 @@ let recordingStartTime = null;
 let recordingTimerInterval = null;
 let currentUpdateStatus = { status: 'idle', message: 'Update checks are ready.' };
 
-const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
+const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 const PREFERRED_GEMINI_MODELS = [
-  'gemini-3.1-flash-lite',
   DEFAULT_GEMINI_MODEL,
-  'gemini-3-flash-preview',
-  'gemini-2.5-flash-lite',
-  'gemini-2.5-flash'
+  'gemini-3.1-flash-lite',
+  'gemini-3.6-flash',
+  'gemini-3.7-flash',
+  'gemini-3-flash-preview'
 ];
-// Stable, widely-available audio-capable models used as a fallback when the
-// user's selected model keeps failing (e.g. a preview model returning
-// "Internal error encountered." / HTTP 500). Ordered most-reliable-first.
+// Current stable audio-input models used only if model discovery is unavailable.
+// When discovery succeeds, fallbacks come from the models available to that
+// user's API key so Freesia never forces a retired or inaccessible model.
 const TRANSCRIBE_FALLBACK_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-2.5-flash-lite'
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite'
 ];
 const BLOCKED_MODEL_ID_PATTERNS = [
   'embedding',
@@ -455,10 +455,29 @@ function getSelectedModel() {
 }
 
 // The ordered list of models transcription will try: the user's pick first,
-// then stable fallbacks, de-duplicated. Ensures a flaky/preview model can't
-// hard-fail transcription.
-function buildTranscribeModels(primary) {
-  return [...new Set([primary, ...TRANSCRIBE_FALLBACK_MODELS].filter(Boolean))];
+// then up to three stable Flash models that model discovery confirmed are
+// available to the user's key. The static list is only an offline fallback.
+function buildTranscribeModels(primary, discoveredModels = availableModels) {
+  const discoveredFallbacks = (discoveredModels || [])
+    .map(model => normalizeModelId(typeof model === 'string' ? model : model?.id))
+    .filter(id => id
+      && id.startsWith('gemini-3')
+      && id.includes('flash')
+      && !id.includes('preview')
+      && !id.includes('experimental')
+      && !id.includes('latest')
+      && !isBlockedModel(id));
+  const fallbacks = discoveredFallbacks.length > 0
+    ? discoveredFallbacks
+    : TRANSCRIBE_FALLBACK_MODELS;
+  return [...new Set([normalizeModelId(primary), ...fallbacks].filter(Boolean))].slice(0, 4);
+}
+
+function summarizeTranscriptionFailure(error, primaryModel, attemptedModels) {
+  const fallbackCount = Math.max(0, attemptedModels.length - 1);
+  const detail = error?.message || 'Unknown error';
+  if (fallbackCount === 0) return `Selected model ${primaryModel} failed: ${detail}`;
+  return `Selected model ${primaryModel} and ${fallbackCount} fallback model${fallbackCount === 1 ? '' : 's'} failed. Last fallback error: ${detail}`;
 }
 
 async function fetchAvailableModels() {
@@ -1307,6 +1326,7 @@ async function processAudio(audioBlob, mode) {
   }
 
   if (!success) {
+    const failureSummary = summarizeTranscriptionFailure(lastError, primaryModel, transcribeModels);
     // Update the saved file's metadata with the actual error
     if (savedBaseName) {
       try {
@@ -1316,7 +1336,7 @@ async function processAudio(audioBlob, mode) {
           mode,
           sizeMB: audioSizeMB,
           duration,
-          error: lastError?.message || 'Unknown error',
+          error: failureSummary,
           style: activeStyleId
         });
       } catch (e) { /* already saved, non-critical */ }
@@ -2055,6 +2075,7 @@ window.__freesiaTest = {
   expandSnippets,
   getAllStyles,
   buildTranscribeModels,
+  summarizeTranscriptionFailure,
   TRANSCRIBE_FALLBACK_MODELS,
   setSettings: (s) => { settings = s; }
 };

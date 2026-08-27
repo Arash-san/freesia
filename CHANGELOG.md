@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.3
+
+- Fixed transcription retries forcing Gemini 2.5/2.0 models that may be unavailable to the user's API key. Freesia now chooses fallback models from the models that Google reports as available for that key, with a current stable emergency list when discovery is unavailable.
+- Saved recording errors now distinguish the user's selected model from a fallback model, so a fallback failure is no longer presented as though the user selected it.
+- Updated the new-install default to Gemini 3.5 Flash-Lite and the preferred model order to current stable Gemini 3 models.
+
 ## 2.2.2
 
 - Fixed dictation not pasting into AnyDesk (and other remote-desktop clients like RDP/TeamViewer, plus some games): these capture keyboard at the hardware scan-code level and ignore the virtual-key Ctrl+V the app used to send, so their remote session never received the paste and you had to press Ctrl+V yourself. Freesia now sends a hardware scan-code Ctrl+V via SendInput, which is forwarded like a real keystroke (and still works for ordinary local apps). A short delay before pasting also lets the remote client sync the clipboard first, and the old method remains as a fallback.
