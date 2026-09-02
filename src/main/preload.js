@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('freesia', {
   overlayError: () => ipcRenderer.invoke('overlay-error'),
   overlayHide: () => ipcRenderer.invoke('overlay-hide'),
   overlayTimer: (timeStr) => ipcRenderer.invoke('overlay-timer', timeStr),
+  overlayAudioLevel: (level) => ipcRenderer.send('overlay-audio-level', level),
 
   // Recording state sync
   recordingFailed: () => ipcRenderer.invoke('recording-failed'),
@@ -74,6 +75,7 @@ contextBridge.exposeInMainWorld('freesia', {
   onCommandStart: (callback) => ipcRenderer.on('command-start', callback),
   onOverlayState: (callback) => ipcRenderer.on('overlay-state', (_, state) => callback(state)),
   onOverlayTimer: (callback) => ipcRenderer.on('overlay-timer', (_, timeStr) => callback(timeStr)),
+  onOverlayAudioLevel: (callback) => ipcRenderer.on('overlay-audio-level', (_, level) => callback(level)),
   onUpdateStatus: (callback) => {
     const handler = (_, state) => callback(state);
     ipcRenderer.on('update-status', handler);

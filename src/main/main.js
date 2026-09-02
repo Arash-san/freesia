@@ -99,7 +99,8 @@ const store = new Store({
     dictationShortcut: 'Ctrl+Shift+Space',
     commandShortcut: 'Ctrl+Shift+Alt+Space',
     aiFormatting: true,
-    geminiModel: '',
+    geminiModel: 'gemini-3.5-flash-lite',
+    microphoneId: '',
     language: 'en',
     theme: 'system',
     autoLaunch: false,
@@ -693,6 +694,13 @@ ipcMain.handle('overlay-hide', () => {
 
 ipcMain.handle('overlay-timer', (_, timeStr) => {
   sendOverlay('overlay-timer', timeStr);
+});
+
+// Forward the recorder's real microphone level to the always-on-top overlay.
+// This is a fire-and-forget event because it is sent several times per second.
+ipcMain.on('overlay-audio-level', (_, level) => {
+  const safeLevel = Math.max(0, Math.min(1, Number(level) || 0));
+  sendOverlay('overlay-audio-level', safeLevel);
 });
 
 ipcMain.handle('open-external', (_, url) => shell.openExternal(url));

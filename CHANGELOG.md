@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.0
+
+- Confirmed Gemini 3.5 Flash-Lite as the new-install default and preferred dictation model.
+- Added a microphone device selector in Settings. The choice applies to both global-shortcut dictation and the microphone test, and safely falls back to the system default if the saved device is disconnected.
+- Replaced the Ctrl+Shift+Space overlay's decorative looping bars with a noise-gated waveform driven by the real microphone input level.
+- Added automated coverage for the model default, microphone constraints, audio-level behavior, device selector, and non-animated shortcut overlay.
+
 ## 2.2.3
 
 - Fixed transcription retries forcing Gemini 2.5/2.0 models that may be unavailable to the user's API key. Freesia now chooses fallback models from the models that Google reports as available for that key, with a current stable emergency list when discovery is unavailable.

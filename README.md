@@ -42,6 +42,8 @@ Upgrading from Dictaloom? Freesia automatically migrates your API key, dictionar
 - One-click copy buttons for saved history entries
 - Beautiful light and dark themes that follow Windows by default
 - Quick microphone test panel with a live waveform
+- Selectable microphone input with automatic fallback when a device is disconnected
+- Shortcut overlay waveform driven by the live microphone level
 - Local retry storage for recordings that fail to process
 - In-app update checks backed by GitHub Releases
 

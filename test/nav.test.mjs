@@ -45,3 +45,9 @@ test('CSS actually hides inactive views (guards the 2.1.0 regression)', () => {
   assert.match(css, /\.view\s*\{[^}]*display:\s*none/, '.view must default to display:none');
   assert.match(css, /\.view\.active\s*\{[^}]*display:\s*block/, '.view.active must display:block');
 });
+
+test('shortcut overlay waveform is driven by microphone levels, not a looping fake animation', () => {
+  const overlay = readRenderer('overlay.html');
+  assert.match(overlay, /onOverlayAudioLevel/);
+  assert.doesNotMatch(overlay, /@keyframes\s+waveBar/);
+});

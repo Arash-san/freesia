@@ -22,6 +22,7 @@ let lastDetectedApp = '';
 let recordingStartTime = null;
 let recordingTimerInterval = null;
 let currentUpdateStatus = { status: 'idle', message: 'Update checks are ready.' };
+let lastOverlayLevelSentAt = 0;
 
 const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 const PREFERRED_GEMINI_MODELS = [
@@ -187,6 +188,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderAppRules();
   loadFailedRecordings();
   loadStylesFromDisk();
+  loadMicrophones();
+  navigator.mediaDevices?.addEventListener?.('devicechange', loadMicrophones);
   // Place the segmented-nav highlight once the top bar has laid out
   requestAnimationFrame(positionNavIndicator);
 });
@@ -274,6 +277,7 @@ function bindEvents() {
   });
   document.getElementById('toggleFormatting')?.addEventListener('change', (e) => saveSetting('aiFormatting', e.target.checked));
   document.getElementById('selectLanguage')?.addEventListener('change', (e) => saveSetting('language', e.target.value));
+  document.getElementById('selectMicrophone')?.addEventListener('change', (e) => saveSetting('microphoneId', e.target.value));
   document.getElementById('selectTheme')?.addEventListener('change', (e) => setTheme(e.target.value));
   document.getElementById('toggleAutoLaunch')?.addEventListener('change', (e) => {
     api.setAutoLaunch(e.target.checked);
@@ -593,7 +597,7 @@ async function selectModel(modelId) {
 
 async function resetAllSettings() {
   if (!confirm('Are you sure? This will clear your API key, dictionary, snippets, history, and all settings.')) return;
-  const keys = ['apiKey', 'onboarded', 'geminiModel', 'aiFormatting', 'language', 'theme',
+  const keys = ['apiKey', 'onboarded', 'geminiModel', 'microphoneId', 'aiFormatting', 'language', 'theme',
     'autoLaunch', 'showOverlay', 'sounds', 'keepSuccessRecordings', 'dictionary', 'snippets',
     'history', 'stats', 'errorLog', 'customStyles', 'toolTrimSpelling', 'toolSpokenEmoji',
     'toolPolish', 'errorReporting', 'activeStyle', 'autoStyleSwitch', 'styleOverrides'];
@@ -618,6 +622,8 @@ function updateSettingsUI() {
   if (fmt) fmt.checked = settings.aiFormatting !== false;
   const lang = document.getElementById('selectLanguage');
   if (lang) lang.value = settings.language || 'en';
+  const microphone = document.getElementById('selectMicrophone');
+  if (microphone) microphone.value = settings.microphoneId || '';
   const theme = document.getElementById('selectTheme');
   if (theme) theme.value = settings.theme || 'system';
   const al = document.getElementById('toggleAutoLaunch');
@@ -1062,6 +1068,52 @@ async function copyHistoryItem(id) {
 // ============================================
 // Audio & Dictation
 // ============================================
+function buildAudioConstraints(deviceId) {
+  return deviceId ? { deviceId: { exact: deviceId } } : true;
+}
+
+async function loadMicrophones() {
+  const select = document.getElementById('selectMicrophone');
+  if (!select || !navigator.mediaDevices?.enumerateDevices) return;
+
+  try {
+    const devices = (await navigator.mediaDevices.enumerateDevices())
+      .filter(device => device.kind === 'audioinput');
+    const selectedId = settings.microphoneId || '';
+    const selectedIsAvailable = !selectedId || devices.some(device => device.deviceId === selectedId);
+    select.replaceChildren();
+    select.add(new Option('System default', ''));
+    devices.forEach((device, index) => {
+      const label = device.label || `Microphone ${index + 1}`;
+      select.add(new Option(label, device.deviceId));
+    });
+    if (!selectedIsAvailable) {
+      select.add(new Option('Previously selected microphone (unavailable)', selectedId));
+    }
+    select.value = selectedId;
+  } catch (e) {
+    logError('loadMicrophones', e);
+  }
+}
+
+async function openMicrophoneStream() {
+  const selectedId = settings.microphoneId || '';
+  try {
+    return await navigator.mediaDevices.getUserMedia({ audio: buildAudioConstraints(selectedId) });
+  } catch (e) {
+    const deviceUnavailable = selectedId && ['NotFoundError', 'OverconstrainedError'].includes(e?.name);
+    if (!deviceUnavailable) throw e;
+
+    // A Bluetooth/USB input may disappear between launches. Keep dictation
+    // working with the system default and make that fallback visible in Settings.
+    await saveSetting('microphoneId', '');
+    const select = document.getElementById('selectMicrophone');
+    if (select) select.value = '';
+    showToast('Selected microphone is unavailable. Using the system default.', 'info');
+    return navigator.mediaDevices.getUserMedia({ audio: true });
+  }
+}
+
 async function toggleMicTest() {
   if (isRecording) {
     stopRecording();
@@ -1076,8 +1128,10 @@ async function startRecording() {
     // Auto-detect style from focused app before recording
     await detectAndApplyAutoStyle();
 
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await openMicrophoneStream();
     isRecording = true;
+    // Permission unlocks human-readable device labels in Chromium.
+    loadMicrophones();
 
     // Visual feedback
     const btn = document.getElementById('btnMicTest');
@@ -1105,6 +1159,7 @@ async function startRecording() {
     mediaRecorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
       cancelAnimationFrame(animFrameId);
+      api.overlayAudioLevel?.(0);
       clearWaveform();
       const btn = document.getElementById('btnMicTest');
       if (btn) btn.classList.remove('recording');
@@ -1139,6 +1194,7 @@ function stopRecording() {
     audioContext.close();
     audioContext = null;
   }
+  api.overlayAudioLevel?.(0);
   // Timer continues until processAudio finishes
 }
 
@@ -1467,7 +1523,9 @@ function drawWaveform() {
   const ctx = canvas.getContext('2d');
   const bufferLength = analyser.frequencyBinCount;
   const dataArray = new Uint8Array(bufferLength);
+  const timeDomainData = new Uint8Array(analyser.fftSize);
   const BAR_COUNT = 88;
+  let smoothedLevel = 0;
 
   // Petal palette read from the active theme so it works in light + dark
   const styles = getComputedStyle(document.documentElement);
@@ -1478,6 +1536,16 @@ function drawWaveform() {
   function draw() {
     animFrameId = requestAnimationFrame(draw);
     analyser.getByteFrequencyData(dataArray);
+    analyser.getByteTimeDomainData(timeDomainData);
+    smoothedLevel = calculateAudioLevel(timeDomainData, smoothedLevel);
+
+    // Keep IPC bounded while still feeling immediate. The overlay uses this
+    // value directly, so silence produces flat bars and speech makes them rise.
+    const now = performance.now();
+    if (now - lastOverlayLevelSentAt >= 50) {
+      api.overlayAudioLevel?.(smoothedLevel);
+      lastOverlayLevelSentAt = now;
+    }
 
     const size = canvas.clientWidth || 380;
     if (canvas.width !== size) { canvas.width = size; canvas.height = size; }
@@ -1515,6 +1583,21 @@ function drawWaveform() {
     ctx.globalAlpha = 1;
   }
   draw();
+}
+
+function calculateAudioLevel(samples, previousLevel = 0) {
+  if (!samples?.length) return 0;
+  let sumSquares = 0;
+  for (const sample of samples) {
+    const normalized = (sample - 128) / 128;
+    sumSquares += normalized * normalized;
+  }
+  const rms = Math.sqrt(sumSquares / samples.length);
+  // Ignore normal room/electrical noise, then scale typical speech into 0..1.
+  const gated = Math.max(0, Math.min(1, (rms - 0.018) / 0.22));
+  const smoothing = gated > previousLevel ? 0.58 : 0.22;
+  const level = previousLevel + (gated - previousLevel) * smoothing;
+  return level < 0.01 ? 0 : level;
 }
 
 // Small hex-color interpolator for the radial gradient ring
@@ -1556,7 +1639,8 @@ function setupIpcListeners() {
           const stream = mediaRecorder.stream;
           stream.getTracks().forEach(t => t.stop());
           cancelAnimationFrame(animFrameId);
-      clearWaveform();
+          clearWaveform();
+          api.overlayAudioLevel?.(0);
           const btn = document.getElementById('btnMicTest');
           if (btn) btn.classList.remove('recording');
           stopRecordingTimer();
@@ -1584,7 +1668,8 @@ function setupIpcListeners() {
             const stream = mediaRecorder.stream;
             stream.getTracks().forEach(t => t.stop());
             cancelAnimationFrame(animFrameId);
-      clearWaveform();
+            clearWaveform();
+            api.overlayAudioLevel?.(0);
             const btn = document.getElementById('btnMicTest');
             if (btn) btn.classList.remove('recording');
             stopRecordingTimer();
@@ -2077,5 +2162,8 @@ window.__freesiaTest = {
   buildTranscribeModels,
   summarizeTranscriptionFailure,
   TRANSCRIBE_FALLBACK_MODELS,
+  DEFAULT_GEMINI_MODEL,
+  buildAudioConstraints,
+  calculateAudioLevel,
   setSettings: (s) => { settings = s; }
 };

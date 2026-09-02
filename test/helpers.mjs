@@ -25,7 +25,7 @@ export async function boot(overrides = {}) {
     onboarded: true, apiKey: '', theme: 'dark', aiFormatting: true,
     dictionary: [], snippets: [], history: [], stats: null,
     activeStyle: 'normal', styleOverrides: {}, autoStyleSwitch: false,
-    showOverlay: true, sounds: true
+    showOverlay: true, sounds: true, microphoneId: ''
   }, overrides);
 
   const noop = () => {};
@@ -42,10 +42,16 @@ export async function boot(overrides = {}) {
     logToFile: async () => true,
     injectText: async () => true,
     copyText: async () => true,
-    overlayTimer: noop,
+    overlayTimer: noop, overlayAudioLevel: noop,
     onDictationStart: noop, onDictationStop: noop, onDictationCancel: noop,
-    onCommandStart: noop, onOverlayState: noop, onOverlayTimer: noop,
+    onCommandStart: noop, onOverlayState: noop, onOverlayTimer: noop, onOverlayAudioLevel: noop,
     onUpdateStatus: noop, onThemeUpdated: noop
+  };
+
+  window.navigator.mediaDevices = {
+    enumerateDevices: async () => [],
+    addEventListener: noop,
+    getUserMedia: async () => { throw new Error('getUserMedia is not available in unit tests'); }
   };
 
   window.eval(readRenderer('styles-data.js'));
