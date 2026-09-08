@@ -181,6 +181,7 @@
       window.freesia.onOverlayState((state) => {
         overlay.className = 'overlay ' + state;
         statusText.textContent = states[state] || 'Ready';
+        waveBars.forEach(bar => { bar.style.height = '4px'; });
         // Show timer only while listening
         if (state === 'listening') {
           timerText.style.display = '';
@@ -201,7 +202,7 @@
 
       if (window.freesia.onOverlayAudioLevel) {
         window.freesia.onOverlayAudioLevel((rawLevel) => {
-          const level = Math.max(0, Math.min(1, Number(rawLevel) || 0));
+          const level = overlay.classList.contains('listening') ? Math.max(0, Math.min(1, Number(rawLevel) || 0)) : 0;
           waveBars.forEach((bar, index) => {
             bar.style.height = `${4 + level * 13 * waveShape[index]}px`;
           });

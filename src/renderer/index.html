@@ -52,6 +52,16 @@
               <span class="pill">⌨️ Works Everywhere</span>
               <span class="pill">🔒 Your API Key</span>
             </div>
+            <div class="setting-row" style="text-align: left; margin-bottom: 16px;">
+              <div class="setting-info">
+                <label class="setting-title" for="onboardingErrorReporting">Help improve Freesia</label>
+                <div class="setting-desc">Send app version, operating system, error details, and an anonymous installation ID when something breaks. The service also receives your IP address. Audio, transcripts, and your API key are not included. Turn this off now or later in Settings.</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="onboardingErrorReporting" checked aria-label="Send diagnostic error reports">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
             <button class="btn btn-primary btn-lg" id="btnGetStarted">
               Get Started
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
@@ -182,6 +192,10 @@
       </header>
 
       <main class="stage">
+        <div class="home-update glass-card" id="homeUpdate" role="status">
+          <span id="homeUpdateText">Check for a newer version of Freesia.</span>
+          <button class="btn btn-secondary btn-sm" id="btnHomeUpdate">Check for updates</button>
+        </div>
         <!-- ===== Home ===== -->
         <section class="view active" id="dashboardPage">
           <!-- Hero: the voice bloom -->
@@ -582,7 +596,7 @@
             <div class="setting-row">
               <div class="setting-info">
                 <div class="setting-title">Send error reports to the developer</div>
-                <div class="setting-desc">Off by default. When on, only redacted diagnostics are sent when something breaks — app version, OS, and error details. Never your transcribed text or API key.</div>
+                <div class="setting-desc">Enabled for new installations. Send app version, operating system, error details, and an anonymous installation ID when something breaks. The service also receives your IP address. Audio, transcripts, and your API key are not included. Turn this off at any time.</div>
               </div>
               <label class="toggle">
                 <input type="checkbox" id="toggleErrorReporting">
@@ -627,6 +641,7 @@
   </div>
 
   <script src="styles-data.js"></script>
+  <script src="audio-meter.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

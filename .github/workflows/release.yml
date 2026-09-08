@@ -30,6 +30,9 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Test native recording and overlay
+        run: npm run test:native
+
       - name: Build and publish release
         run: npm run release
         env:

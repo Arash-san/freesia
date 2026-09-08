@@ -101,6 +101,8 @@ Manual release builds also work from GitHub Actions through **Run workflow**.
 
 Freesia uses `electron-updater` with GitHub Releases. The release workflow uploads the Windows installer, blockmap, and `latest.yml`; installed builds use that metadata to find and download updates.
 
+Freesia checks at startup, every five minutes, after waking from sleep, and when you reopen the app. The Home screen has a permanent update control. Choose Download update, then confirm Restart to update when the download is ready. Installation runs quietly and reopens Freesia. A newer release discovered after a download replaces the old update offer. Downloaded updates are never installed merely because you close the app.
+
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes, including the rename from Dictaloom to Freesia.
@@ -117,6 +119,8 @@ src/renderer/           App UI, styling, and renderer logic
 ## Privacy
 
 Freesia stores settings locally with `electron-store`. Your Gemini API key stays on your machine and is sent only to Google's Gemini API when you transcribe or format audio.
+
+New installations enable diagnostic error reports by default. A visible switch on the first setup screen lets you disable them; Settings has the same control. Existing users keep their saved choice. Reports contain app version, operating system, error details, and an anonymous installation ID. The receiving service also records the connection IP address. Freesia does not include audio, transcripts, or API keys in these reports.
 
 ## License
 

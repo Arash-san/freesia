@@ -1,4 +1,5 @@
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, clipboard, nativeImage, shell, nativeTheme, screen, dialog } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, clipboard, nativeImage, shell, nativeTheme, screen, dialog, powerMonitor } = require('electron');
+const { createUpdateController } = require('./update-controller');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
@@ -92,6 +93,7 @@ app.on('second-instance', () => {
   }
 });
 
+const isNewInstall = !fs.existsSync(path.join(app.getPath('userData'), 'config.json'));
 const store = new Store({
   defaults: {
     apiKey: '',
@@ -121,8 +123,8 @@ const store = new Store({
     toolTrimSpelling: false,
     toolSpokenEmoji: false,
     toolPolish: false,
-    // Opt-in, redacted error reporting to the developer
-    errorReporting: false,
+    // New installs disclose this default in onboarding; preserve existing choices.
+    errorReporting: isNewInstall,
     // Stable anonymous id so reports from one install group together
     installId: ''
   }
@@ -203,9 +205,8 @@ function serializeUpdateError(error) {
   return error instanceof Error ? error.message : String(error || 'Update check failed.');
 }
 
+let updateController;
 function setupAutoUpdater() {
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.logger = {
     info: (message) => writeLog('INFO', 'autoUpdater', String(message)),
     warn: (message) => writeLog('WARN', 'autoUpdater', String(message)),
@@ -213,73 +214,16 @@ function setupAutoUpdater() {
     debug: (message) => writeLog('DEBUG', 'autoUpdater', String(message))
   };
 
-  autoUpdater.on('checking-for-update', () => {
-    sendUpdateStatus('checking', {
-      message: 'Checking GitHub Releases for updates.',
-      progress: null
-    });
+  updateController = createUpdateController({
+    updater: autoUpdater, publish: sendUpdateStatus, packaged: app.isPackaged,
+    canInstall: () => !isRecording && !isProcessing,
+    beforeInstall: () => { app.isQuitting = true; },
+    installFailed: () => { app.isQuitting = false; }
   });
-
-  autoUpdater.on('update-available', (info) => {
-    sendUpdateStatus('available', {
-      message: `Version ${info.version} is available.`,
-      updateInfo: sanitizeUpdateInfo(info),
-      progress: null
-    });
-  });
-
-  autoUpdater.on('update-not-available', (info) => {
-    sendUpdateStatus('current', {
-      message: 'Freesia is up to date.',
-      updateInfo: sanitizeUpdateInfo(info),
-      progress: null
-    });
-  });
-
-  autoUpdater.on('download-progress', (progress) => {
-    const percent = Math.round(progress.percent || 0);
-    sendUpdateStatus('downloading', {
-      message: `Downloading update (${percent}%).`,
-      progress: {
-        percent,
-        transferred: progress.transferred || 0,
-        total: progress.total || 0,
-        bytesPerSecond: progress.bytesPerSecond || 0
-      }
-    });
-  });
-
-  autoUpdater.on('update-downloaded', (info) => {
-    sendUpdateStatus('downloaded', {
-      message: `Version ${info.version} is ready to install.`,
-      updateInfo: sanitizeUpdateInfo(info),
-      progress: { percent: 100 }
-    });
-  });
-
-  autoUpdater.on('error', (error) => {
-    const message = serializeUpdateError(error);
-    writeLog('ERROR', 'autoUpdater', message, error?.stack);
-    sendUpdateStatus('error', {
-      message,
-      progress: null
-    });
-  });
-
-  if (app.isPackaged) {
-    setTimeout(() => {
-      autoUpdater.checkForUpdates().catch((error) => {
-        const message = serializeUpdateError(error);
-        writeLog('ERROR', 'autoUpdater:autoCheck', message, error?.stack);
-        sendUpdateStatus('error', { message, progress: null });
-      });
-    }, 10000);
-  } else {
-    sendUpdateStatus('disabled', {
-      message: 'Updates are enabled in installed builds.',
-      progress: null
-    });
-  }
+  updateController.start();
+  powerMonitor.on('resume', () => updateController.check());
+  mainWindow.on('show', () => updateController.check());
+  app.on('before-quit', () => updateController.stop());
 }
 
 function createMainWindow() {
@@ -473,7 +417,7 @@ let lastShortcutTime = 0;
 let isProcessing = false;
 let processingSince = 0;
 const SHORTCUT_COOLDOWN_MS = 350;
-const PROCESSING_STUCK_MS = 45000;
+const PROCESSING_STUCK_MS = 180000;
 
 function handleShortcut(mode) {
   const now = Date.now();
@@ -665,6 +609,13 @@ ipcMain.handle('minimize-window', () => mainWindow && mainWindow.minimize());
 ipcMain.handle('close-window', () => mainWindow && mainWindow.hide());
 
 // Renderer failed to start recording (mic denied, device missing).
+ipcMain.on('recording-state', (_, state) => {
+  isRecording = state === 'recording';
+  isProcessing = state === 'processing';
+  if (isProcessing) { processingSince = Date.now(); sendOverlay('overlay-state', 'processing'); }
+  if (isRecording) globalShortcut.register('Escape', cancelDictation);
+  else globalShortcut.unregister('Escape');
+});
 // Without this, main-process state stayed "recording" and the next
 // shortcut press behaved like a stop — looking like a dead hotkey.
 ipcMain.handle('recording-failed', () => {
@@ -713,53 +664,9 @@ ipcMain.handle('set-app-theme', (_, themeSource) => applyAppTheme(themeSource));
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('get-update-status', () => updateState);
 
-ipcMain.handle('check-for-updates', async () => {
-  if (!app.isPackaged) {
-    return sendUpdateStatus('disabled', {
-      message: 'Install a packaged build to check GitHub Releases for updates.',
-      progress: null
-    });
-  }
-
-  try {
-    await autoUpdater.checkForUpdates();
-    return updateState;
-  } catch (error) {
-    const message = serializeUpdateError(error);
-    writeLog('ERROR', 'autoUpdater:manualCheck', message, error?.stack);
-    return sendUpdateStatus('error', { message, progress: null });
-  }
-});
-
-ipcMain.handle('download-update', async () => {
-  if (!app.isPackaged) {
-    return sendUpdateStatus('disabled', {
-      message: 'Updates are only downloaded by installed builds.',
-      progress: null
-    });
-  }
-
-  try {
-    await autoUpdater.downloadUpdate();
-    return updateState;
-  } catch (error) {
-    const message = serializeUpdateError(error);
-    writeLog('ERROR', 'autoUpdater:download', message, error?.stack);
-    return sendUpdateStatus('error', { message, progress: null });
-  }
-});
-
-ipcMain.handle('install-update', () => {
-  if (!app.isPackaged) {
-    return sendUpdateStatus('disabled', {
-      message: 'Updates can only be installed from packaged builds.',
-      progress: null
-    });
-  }
-
-  autoUpdater.quitAndInstall(false, true);
-  return true;
-});
+ipcMain.handle('check-for-updates', () => updateController.check(true));
+ipcMain.handle('download-update', () => updateController.download());
+ipcMain.handle('install-update', () => updateController.install());
 
 ipcMain.handle('set-auto-launch', (_, enabled) => {
   app.setLoginItemSettings({ openAtLogin: enabled });
@@ -790,29 +697,31 @@ function getFailedDir() {
   return dir;
 }
 
-ipcMain.handle('save-failed-audio', async (_, base64Data, metadata) => {
+ipcMain.handle('save-failed-audio', async (_, base64Data, metadata, existingBase) => {
   const dir = getFailedDir();
-  const ts = Date.now();
-  const audioPath = path.join(dir, `recording-${ts}.webm`);
-  const metaPath = path.join(dir, `recording-${ts}.json`);
-  const buffer = Buffer.from(base64Data, 'base64');
-  fs.writeFileSync(audioPath, buffer);
-  fs.writeFileSync(metaPath, JSON.stringify(metadata, null, 2), 'utf-8');
-  writeLog('WARN', 'failedRecording', `Saved failed recording: recording-${ts}.webm (${(buffer.length / 1024 / 1024).toFixed(1)} MB)`);
-  return `recording-${ts}`;
+  if (existingBase && !/^recording-[\w-]+$/.test(existingBase)) throw new Error('Invalid recording id');
+  const base = existingBase || `recording-${Date.now()}-${require('crypto').randomUUID()}`;
+  if (base64Data !== null) await fs.promises.writeFile(path.join(dir, base + '.webm'), Buffer.from(base64Data, 'base64'));
+  await fs.promises.writeFile(path.join(dir, base + '.json'), JSON.stringify(metadata, null, 2), 'utf-8');
+  return base;
 });
 
 ipcMain.handle('get-failed-recordings', async () => {
   const dir = getFailedDir();
-  const files = fs.readdirSync(dir).filter(f => f.endsWith('.webm'));
-  return files.map(f => {
+  const files = (await fs.promises.readdir(dir)).filter(f => f.endsWith('.webm'));
+  const entries = [];
+  for (const f of files) {
     const base = f.replace('.webm', '');
     const metaPath = path.join(dir, base + '.json');
     let meta = {};
-    try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8')); } catch (e) { /* ignore */ }
-    const stat = fs.statSync(path.join(dir, f));
-    return { filename: f, baseName: base, sizeMB: (stat.size / 1024 / 1024).toFixed(1), ...meta };
-  }).sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+    try { meta = JSON.parse(await fs.promises.readFile(metaPath, 'utf-8')); }
+    catch (e) { /* Audio remains recoverable even if metadata could not be saved. */ }
+    try {
+      const stat = await fs.promises.stat(path.join(dir, f));
+      entries.push({ filename: f, baseName: base, sizeMB: (stat.size / 1024 / 1024).toFixed(1), ...meta });
+    } catch (e) { /* a recording may be removed during enumeration */ }
+  }
+  return entries.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
 });
 
 ipcMain.handle('get-failed-recording-data', async (_, filename) => {
@@ -906,12 +815,12 @@ ipcMain.handle('import-style-file', async () => {
 });
 
 // ============================================
-// Opt-in, redacted error reporting
+// Optional, redacted error reporting
 // ============================================
 const REPORT_ENDPOINT = 'https://inquirelab.ai/freesia/report';
 
 // Send a single redacted report. Never includes transcribed text or the
-// API key — only diagnostics. No-op unless the user turned reporting on.
+// API key — only diagnostics. No-op when reporting is disabled.
 async function sendErrorReport({ level, context, message, stack }) {
   if (!store.get('errorReporting')) return false;
   try {

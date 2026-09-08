@@ -1,6 +1,6 @@
 {
   "name": "freesia",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Freesia - free, open-source AI voice dictation for Windows. Speak freely. Write beautifully.",
   "main": "src/main/main.js",
   "license": "MIT",
@@ -17,6 +17,7 @@
     "start": "electron .",
     "dev": "electron . --dev",
     "test": "node --test \"test/**/*.test.mjs\"",
+    "test:native": "node test/run-native.cjs",
     "build": "electron-builder",
     "package": "electron-builder --win --x64",
     "release": "electron-builder --win --x64 --publish always"
@@ -41,6 +42,7 @@
       "icon": "assets/icon.ico"
     },
     "nsis": {
+      "include": "assets/installer.nsh",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "installerIcon": "assets/icon.ico",

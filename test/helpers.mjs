@@ -55,6 +55,7 @@ export async function boot(overrides = {}) {
   };
 
   window.eval(readRenderer('styles-data.js'));
+  window.eval(readRenderer('audio-meter.js'));
   window.eval(readRenderer('app.js'));
 
   // Fire the load event and let the async init settle

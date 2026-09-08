@@ -23,6 +23,10 @@ let recordingStartTime = null;
 let recordingTimerInterval = null;
 let currentUpdateStatus = { status: 'idle', message: 'Update checks are ready.' };
 let lastOverlayLevelSentAt = 0;
+let recordingSession = 0;
+let isStartingRecording = false;
+let isStoppingRecording = false;
+const modelCooldowns = new Map();
 
 const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 const PREFERRED_GEMINI_MODELS = [
@@ -71,6 +75,7 @@ function logError(context, error) {
     stack: error?.stack || ''
   };
   errorLog.push(entry);
+  if (errorLog.length > 200) errorLog.splice(0, errorLog.length - 200);
   console.error(`[${context}]`, error);
   // Save to persistent storage
   api.setSetting('errorLog', errorLog);
@@ -185,7 +190,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderSnippets();
   renderHistory();
   renderStyleGrid();
-  renderAppRules();
   loadFailedRecordings();
   loadStylesFromDisk();
   loadMicrophones();
@@ -260,7 +264,10 @@ function bindEvents() {
   document.querySelectorAll('.topnav-item[data-page]').forEach(btn => {
     btn.addEventListener('click', () => showContentPage(btn.dataset.page + 'Page'));
   });
-  document.getElementById('navSettings')?.addEventListener('click', () => showPage('pageSettings'));
+  document.getElementById('navSettings')?.addEventListener('click', () => {
+    showPage('pageSettings');
+    renderAppRules();
+  });
   document.getElementById('btnBackSettings')?.addEventListener('click', () => {
     showPage('pageMain');
     // Recompute the nav highlight now that the bar is measurable again
@@ -294,7 +301,13 @@ function bindEvents() {
   // Error reporting + folders
   document.getElementById('toggleErrorReporting')?.addEventListener('change', (e) => {
     saveSetting('errorReporting', e.target.checked);
+    const onboardingToggle = document.getElementById('onboardingErrorReporting');
+    if (onboardingToggle) onboardingToggle.checked = e.target.checked;
     showToast(e.target.checked ? 'Error reporting on — thank you 🌸' : 'Error reporting off', 'info');
+  });
+  document.getElementById('onboardingErrorReporting')?.addEventListener('change', (e) => {
+    saveSetting('errorReporting', e.target.checked);
+    document.getElementById('toggleErrorReporting').checked = e.target.checked;
   });
   document.getElementById('btnImportStyle')?.addEventListener('click', importStyleFile);
   document.getElementById('btnOpenStylesFolder')?.addEventListener('click', () => api.openStylesFolder?.());
@@ -303,6 +316,12 @@ function bindEvents() {
   document.getElementById('btnCheckUpdates')?.addEventListener('click', checkForUpdates);
   document.getElementById('btnDownloadUpdate')?.addEventListener('click', downloadUpdate);
   document.getElementById('btnInstallUpdate')?.addEventListener('click', installUpdate);
+  document.getElementById('btnHomeUpdate')?.addEventListener('click', () => {
+    if (currentUpdateStatus.status === 'available') return downloadUpdate();
+    if (currentUpdateStatus.status === 'downloaded') return installUpdate();
+    return checkForUpdates();
+  });
+  window.addEventListener('online', checkForUpdates);
 
   // Danger Zone
   document.getElementById('btnViewErrors')?.addEventListener('click', viewErrorLog);
@@ -471,10 +490,31 @@ function buildTranscribeModels(primary, discoveredModels = availableModels) {
       && !id.includes('experimental')
       && !id.includes('latest')
       && !isBlockedModel(id));
-  const fallbacks = discoveredFallbacks.length > 0
-    ? discoveredFallbacks
-    : TRANSCRIBE_FALLBACK_MODELS;
-  return [...new Set([normalizeModelId(primary), ...fallbacks].filter(Boolean))].slice(0, 4);
+  const fallbacks = discoveredModels?.length ? discoveredFallbacks : TRANSCRIBE_FALLBACK_MODELS;
+  const models = [...new Set([normalizeModelId(primary), ...fallbacks].filter(Boolean))];
+  const healthy = models.filter(id => !(modelCooldowns.get(id) > Date.now()));
+  return (healthy.length ? healthy : models).slice(0, 4);
+}
+
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 25000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    let data;
+    try { data = await response.json(); }
+    catch (error) { if (response.ok || controller.signal.aborted) throw error; data = {}; }
+    return { ok: response.ok, status: response.status, data };
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)} seconds`);
+    throw error;
+  } finally { clearTimeout(timer); }
+}
+
+function responseText(data) {
+  return (data.candidates?.[0]?.content?.parts || [])
+    .filter(part => !part.thought && typeof part.text === 'string')
+    .map(part => part.text).join('').trim();
 }
 
 function summarizeTranscriptionFailure(error, primaryModel, attemptedModels) {
@@ -487,11 +527,11 @@ function summarizeTranscriptionFailure(error, primaryModel, attemptedModels) {
 async function fetchAvailableModels() {
   if (!settings.apiKey) return;
   try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${settings.apiKey}&pageSize=100`
+    const response = await fetchJsonWithTimeout(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${settings.apiKey}&pageSize=100`, {}, 10000
     );
     if (!response.ok) return;
-    const data = await response.json();
+    const data = response.data;
 
     // Voice-capable keywords — models that can handle audio input
     const voiceCapablePatterns = ['flash', 'pro', '2.5', '2.0', '3.0', '3.1'];
@@ -642,6 +682,8 @@ function updateSettingsUI() {
   if (tp) tp.checked = !!settings.toolPolish;
   const er = document.getElementById('toggleErrorReporting');
   if (er) er.checked = !!settings.errorReporting;
+  const onboardingEr = document.getElementById('onboardingErrorReporting');
+  if (onboardingEr) onboardingEr.checked = !!settings.errorReporting;
 }
 
 function applyTheme(themeInfo = {}) {
@@ -730,10 +772,20 @@ function renderUpdateStatus(state = {}) {
   }
 
   const status = state.status || 'idle';
-  const busy = status === 'checking' || status === 'downloading';
+  const busy = status === 'checking' || status === 'downloading' || status === 'installing';
   if (checkBtn) checkBtn.disabled = busy;
   if (downloadBtn) downloadBtn.style.display = status === 'available' ? '' : 'none';
   if (installBtn) installBtn.style.display = status === 'downloaded' ? '' : 'none';
+  const homeText = document.getElementById('homeUpdateText');
+  const homeButton = document.getElementById('btnHomeUpdate');
+  if (homeText) homeText.textContent = state.message || 'Check for a newer version of Freesia.';
+  if (homeButton) {
+    homeButton.disabled = busy || status === 'disabled';
+    homeButton.textContent = status === 'available' ? 'Download update'
+      : status === 'downloaded' ? 'Restart to update'
+      : status === 'downloading' ? `Downloading ${Math.round(state.progress?.percent || 0)}%`
+      : status === 'installing' ? 'Installing…' : 'Check for updates';
+  }
 
   const percent = Math.max(0, Math.min(100, Math.round(state.progress?.percent || 0)));
   if (progressEl && progressBar) {
@@ -766,8 +818,15 @@ async function downloadUpdate() {
 }
 
 async function installUpdate() {
+  if (isRecording || isStartingRecording || isProcessingAudio) {
+    showToast('Finish dictation before restarting to update.', 'info');
+    return;
+  }
+  if (currentUpdateStatus.status !== 'downloaded') return;
+  if (!confirm(`Install Freesia ${currentUpdateStatus.updateInfo?.version || ''} now? The app will close, install quietly, and reopen.`)) return;
   try {
-    await api.installUpdate?.();
+    const state = await api.installUpdate?.();
+    if (state) renderUpdateStatus(state);
   } catch (e) {
     logError('installUpdate', e);
     renderUpdateStatus({ status: 'error', message: e.message || 'Update install failed.' });
@@ -1115,20 +1174,25 @@ async function openMicrophoneStream() {
 }
 
 async function toggleMicTest() {
-  if (isRecording) {
+  if (isRecording || isStartingRecording) {
     stopRecording();
   } else {
     await startRecording();
   }
 }
 
-async function startRecording() {
-  if (isProcessingAudio) return; // Don't start while processing
+async function startRecording(mode = 'dictate') {
+  if (isProcessingAudio || isRecording || isStartingRecording || isStoppingRecording) return;
+  mediaRecorder = null;
+  isStartingRecording = true;
+  api.recordingState?.('recording');
+  const session = ++recordingSession;
+  let stream;
   try {
-    // Auto-detect style from focused app before recording
-    await detectAndApplyAutoStyle();
-
-    const stream = await openMicrophoneStream();
+    // Acquire the microphone immediately; foreground detection can finish in parallel.
+    const styleReady = detectAndApplyAutoStyle();
+    stream = await openMicrophoneStream();
+    if (session !== recordingSession) { stream.getTracks().forEach(t => t.stop()); return; }
     isRecording = true;
     // Permission unlocks human-readable device labels in Chromium.
     loadMicrophones();
@@ -1144,12 +1208,15 @@ async function startRecording() {
     audioContext = new AudioContext();
     const source = audioContext.createMediaStreamSource(stream);
     analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
+    analyser.fftSize = 2048;
     source.connect(analyser);
+    await audioContext.resume();
+    if (session !== recordingSession) { stream.getTracks().forEach(t => t.stop()); return; }
     drawWaveform();
 
     // Set up recording — use timeslice to capture data periodically for long recordings
-    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm', audioBitsPerSecond: 64000 });
+    mediaRecorder = recorder;
     audioChunks = [];
 
     mediaRecorder.ondataavailable = (e) => {
@@ -1158,56 +1225,97 @@ async function startRecording() {
 
     mediaRecorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
-      cancelAnimationFrame(animFrameId);
+      clearTimeout(animFrameId);
       api.overlayAudioLevel?.(0);
       clearWaveform();
       const btn = document.getElementById('btnMicTest');
       if (btn) btn.classList.remove('recording');
       stopRecordingTimer();
 
-      if (audioChunks.length > 0) {
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-        await processAudio(audioBlob, 'dictate');
-      }
+      const chunks = audioChunks;
+      audioChunks = [];
+      try {
+        if (recorder.discard || !chunks.length) {
+          api.recordingState?.('idle');
+          api.overlayHide?.();
+          hideRecordingTimer();
+          return;
+        }
+        await styleReady;
+        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
+        await processAudio(audioBlob, mode);
+      } catch (error) {
+        logError('recording:stop', error);
+        api.recordingFailed?.();
+      } finally { isStoppingRecording = false; }
     };
 
     // Use 10s timeslice so data is captured incrementally (prevents data loss on crash)
     mediaRecorder.start(10000);
+    stream.getAudioTracks()[0]?.addEventListener('ended', () => {
+      if (!isRecording) return;
+      showToast('Microphone disconnected. Processing the audio captured so far.', 'info');
+      stopRecording();
+    });
     showToast('🎤 Recording... Click again to stop', 'info');
   } catch (e) {
+    stream?.getTracks().forEach(t => t.stop());
+    if (session !== recordingSession) return;
+    clearTimeout(animFrameId);
+    if (audioContext) { audioContext.close().catch(() => {}); audioContext = null; }
+    analyser = null;
+    clearWaveform();
+    document.getElementById('btnMicTest')?.classList.remove('recording');
+    api.overlayAudioLevel?.(0);
     logError('startRecording', e);
-    showToast('Microphone access denied', 'error');
+    showToast(e.name === 'NotFoundError' ? 'No microphone found. Connect an input device and try again.'
+      : e.name === 'NotAllowedError' ? 'Allow microphone access in Windows privacy settings.'
+      : 'Could not start the microphone. Check the selected device and try again.', 'error');
     hideRecordingTimer();
     isRecording = false;
     // Tell the main process the recording never started so the global
     // shortcut state machine doesn't get stuck in "recording".
     api.recordingFailed?.();
-  }
+  } finally { if (session === recordingSession) isStartingRecording = false; }
 }
 
-function stopRecording() {
+function stopRecording(discard = false) {
+  ++recordingSession;
+  isStartingRecording = false;
   isRecording = false;
+  clearTimeout(animFrameId);
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    isStoppingRecording = true;
+    mediaRecorder.discard = discard;
+    api.recordingState?.(discard ? 'idle' : 'processing');
     mediaRecorder.stop();
+  } else {
+    api.recordingState?.('idle');
+    api.overlayHide?.();
+    hideRecordingTimer();
+    document.getElementById('btnMicTest')?.classList.remove('recording');
+    clearWaveform();
   }
   if (audioContext) {
-    audioContext.close();
+    audioContext.close().catch(() => {});
     audioContext = null;
   }
+  analyser = null;
   api.overlayAudioLevel?.(0);
   // Timer continues until processAudio finishes
 }
 
-async function processAudio(audioBlob, mode) {
+async function processAudio(audioBlob, mode, existingBase = null) {
   if (isProcessingAudio) return;
   isProcessingAudio = true;
+  api.recordingState?.('processing');
   const outputEl = document.getElementById('testOutput');
   const duration = getRecordingDuration();
   if (outputEl) outputEl.innerHTML = `<span class="spinner"></span> Saving recording...`;
 
   let base64Audio = null;
   let audioSizeMB = '0';
-  let savedBaseName = null;
+  let savedBaseName = existingBase;
 
   // ── STEP 1: Encode audio ──
   try {
@@ -1225,15 +1333,15 @@ async function processAudio(audioBlob, mode) {
 
   // ── STEP 2: Save to disk FIRST (safety net — never lose audio) ──
   try {
-    savedBaseName = await api.saveFailedAudio(base64Audio, {
+    savedBaseName = await api.saveFailedAudio(existingBase ? null : base64Audio, {
       timestamp: new Date().toISOString(),
       mode,
       sizeMB: audioSizeMB,
       duration,
       error: 'Pending transcription',
       style: activeStyleId
-    });
-    await loadFailedRecordings();
+    }, existingBase);
+    void loadFailedRecordings();
   } catch (saveErr) {
     logError('processAudio:safetySave', saveErr);
     // Continue anyway — transcription might still work
@@ -1249,12 +1357,14 @@ async function processAudio(audioBlob, mode) {
   const primaryModel = getSelectedModel();
   const transcribeModels = buildTranscribeModels(primaryModel);
   const MAX_RETRIES = transcribeModels.length - 1;
-  const RETRY_DELAYS = [1200, 2500, 5000, 8000];
+  const RETRY_DELAYS = [250, 500, 1000];
+  const attemptedModels = [];
   let lastError = null;
   let success = false;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const model = transcribeModels[Math.min(attempt, transcribeModels.length - 1)];
+    attemptedModels.push(model);
     try {
       if (attempt > 0) {
         const delay = RETRY_DELAYS[attempt - 1] || 8000;
@@ -1263,7 +1373,7 @@ async function processAudio(audioBlob, mode) {
         await new Promise(r => setTimeout(r, delay));
       }
 
-      const transcriptResponse = await fetch(
+      const transcriptResponse = await fetchJsonWithTimeout(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${settings.apiKey}`,
         {
           method: 'POST',
@@ -1290,7 +1400,7 @@ async function processAudio(audioBlob, mode) {
       );
 
       if (!transcriptResponse.ok) {
-        const err = await transcriptResponse.json().catch(() => ({}));
+        const err = transcriptResponse.data;
         const apiMsg = err.error?.message || `HTTP ${transcriptResponse.status}`;
         // Include model + status + audio size so error reports are actionable
         const detailed = new Error(`${apiMsg} [model=${model}, http=${transcriptResponse.status}, audio=${audioSizeMB}MB]`);
@@ -1298,9 +1408,8 @@ async function processAudio(audioBlob, mode) {
         throw detailed;
       }
 
-      const transcriptData = await transcriptResponse.json();
-      let rawText = transcriptData.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      rawText = rawText.trim();
+      const rawText = responseText(transcriptResponse.data);
+      modelCooldowns.delete(model);
 
       if (!rawText) {
         if (outputEl) outputEl.innerHTML = '<span class="text-muted">No speech detected. Try again.</span>';
@@ -1315,7 +1424,7 @@ async function processAudio(audioBlob, mode) {
       if (settings.aiFormatting !== false || anyToolEnabled()) {
         // Snippet expansion and the opt-in tools are handled inside the AI
         // prompt so the model can judge intent and apply spelling/emoji/polish.
-        finalText = await formatWithAI(rawText, mode);
+        finalText = await formatWithAI(rawText, mode, model);
       } else {
         // No AI available: conservative word-boundary expansion on the
         // raw transcript only.
@@ -1335,8 +1444,14 @@ async function processAudio(audioBlob, mode) {
       }
 
       const wordCount = finalText.split(/\s+/).filter(Boolean).length;
-      await incrementStats(wordCount, getRecordingSeconds());
-      await addToHistory(finalText, mode);
+      try {
+        await incrementStats(wordCount, getRecordingSeconds());
+        await addToHistory(finalText, mode);
+      } catch (error) {
+        // A local history failure must never repeat transcription or paste.
+        logError('processAudio:history', error);
+        showToast('Text is ready, but history could not be saved.', 'info');
+      }
 
       // ── SUCCESS: Delete or keep the safety-saved file based on setting ──
       if (savedBaseName && !settings.keepSuccessRecordings) {
@@ -1347,7 +1462,7 @@ async function processAudio(audioBlob, mode) {
       } else if (savedBaseName) {
         // Update metadata to mark as successful
         try {
-          await api.saveFailedAudio(base64Audio, {
+          await api.saveFailedAudio(null, {
             timestamp: new Date().toISOString(),
             mode,
             sizeMB: audioSizeMB,
@@ -1356,7 +1471,7 @@ async function processAudio(audioBlob, mode) {
             status: 'success',
             transcription: finalText.substring(0, 200),
             style: activeStyleId
-          });
+          }, savedBaseName);
           await loadFailedRecordings();
         } catch (e) { /* non-critical */ }
       }
@@ -1369,12 +1484,15 @@ async function processAudio(audioBlob, mode) {
 
     } catch (e) {
       lastError = e;
+      if (e.httpStatus === 404 || e.httpStatus >= 500 || /timed out/i.test(e.message)) {
+        modelCooldowns.set(model, Date.now() + (e.httpStatus === 404 ? 3600000 : 120000));
+      }
       logError(`processAudio (attempt ${attempt + 1}/${MAX_RETRIES + 1}, model ${model})`, e);
       const msg = (e.message || '').toLowerCase();
       // Stop early only on errors that no model switch or retry can fix.
       // Server errors (5xx / "internal error") fall through so the next
       // attempt tries a different, more reliable model.
-      if (['api key', 'api_key', 'quota', 'invalid argument'].some(t => msg.includes(t))) break;
+      if ([400, 401, 403, 429].includes(e.httpStatus) || ['api key', 'api_key', 'quota', 'invalid argument'].some(t => msg.includes(t))) break;
       if (attempt < MAX_RETRIES) {
         showToast(`Transcription failed, trying another model…`, 'error');
       }
@@ -1382,25 +1500,25 @@ async function processAudio(audioBlob, mode) {
   }
 
   if (!success) {
-    const failureSummary = summarizeTranscriptionFailure(lastError, primaryModel, transcribeModels);
+    const failureSummary = summarizeTranscriptionFailure(lastError, primaryModel, attemptedModels);
     // Update the saved file's metadata with the actual error
     if (savedBaseName) {
       try {
         // Re-save with updated error info (overwrites the 'Pending' metadata)
-        await api.saveFailedAudio(base64Audio, {
+        await api.saveFailedAudio(null, {
           timestamp: new Date().toISOString(),
           mode,
           sizeMB: audioSizeMB,
           duration,
           error: failureSummary,
           style: activeStyleId
-        });
+        }, savedBaseName);
       } catch (e) { /* already saved, non-critical */ }
     }
     if (outputEl) {
-      outputEl.innerHTML = `<span style="color: var(--accent-warning)">⚠️ Transcription failed. Recording is saved safely.</span>`;
+      outputEl.innerHTML = `<span style="color: var(--accent-warning)">⚠️ ${savedBaseName ? 'Transcription failed. Recording is saved safely.' : 'Transcription failed and the recording could not be saved. Check available disk space.'}</span>`;
     }
-    showToast('⚠️ Recording saved — retry from Dashboard', 'error');
+    showToast(savedBaseName ? '⚠️ Recording saved — retry from Dashboard' : 'Recording could not be saved. Check available disk space.', 'error');
     await loadFailedRecordings();
     api.overlayError();
   }
@@ -1444,7 +1562,7 @@ function buildToolInstructions() {
   return '\n\nEnabled tools — apply all of these:\n- ' + parts.join('\n- ');
 }
 
-async function formatWithAI(rawText, mode) {
+async function formatWithAI(rawText, mode, model = getSelectedModel()) {
   const dictWords = (settings.dictionary || []).join(', ');
   const dictInstructions = dictWords ? `\nPreserve these custom words exactly: ${dictWords}` : '';
 
@@ -1475,8 +1593,7 @@ async function formatWithAI(rawText, mode) {
   }
 
   try {
-    const model = getSelectedModel();
-    const response = await fetch(
+    const response = await fetchJsonWithTimeout(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${settings.apiKey}`,
       {
         method: 'POST',
@@ -1485,13 +1602,13 @@ async function formatWithAI(rawText, mode) {
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: { temperature: 0.3 }
         })
-      }
+      }, 12000
     );
 
     if (response.ok) {
-      const data = await response.json();
-      return (data.candidates?.[0]?.content?.parts?.[0]?.text || rawText).trim();
+      return responseText(response.data) || rawText;
     }
+    logError('formatWithAI', new Error(`Formatting failed [model=${model}, http=${response.status}]`));
   } catch (e) {
     logError('formatWithAI', e);
   }
@@ -1523,30 +1640,37 @@ function drawWaveform() {
   const ctx = canvas.getContext('2d');
   const bufferLength = analyser.frequencyBinCount;
   const dataArray = new Uint8Array(bufferLength);
-  const timeDomainData = new Uint8Array(analyser.fftSize);
+  const timeDomainData = new Float32Array(analyser.fftSize);
   const BAR_COUNT = 88;
-  let smoothedLevel = 0;
+  const meter = window.createAudioMeter();
 
   // Petal palette read from the active theme so it works in light + dark
   const styles = getComputedStyle(document.documentElement);
   const violet = (styles.getPropertyValue('--accent-violet') || '#A78BFA').trim();
   const pink = (styles.getPropertyValue('--accent-pink') || '#F472B6').trim();
   const amber = (styles.getPropertyValue('--accent-amber') || '#FBBF24').trim();
+  const colors = Array.from({ length: BAR_COUNT }, (_, i) => {
+    const t = i / BAR_COUNT;
+    return t < 0.5 ? lerpColor(violet, pink, t * 2) : lerpColor(pink, amber, (t - 0.5) * 2);
+  });
 
   function draw() {
-    animFrameId = requestAnimationFrame(draw);
-    analyser.getByteFrequencyData(dataArray);
-    analyser.getByteTimeDomainData(timeDomainData);
-    smoothedLevel = calculateAudioLevel(timeDomainData, smoothedLevel);
+    if (!isRecording || !analyser) return;
+    animFrameId = setTimeout(draw, 40);
+    analyser.getFloatTimeDomainData(timeDomainData);
+    const smoothedLevel = meter.sample(timeDomainData);
 
     // Keep IPC bounded while still feeling immediate. The overlay uses this
     // value directly, so silence produces flat bars and speech makes them rise.
     const now = performance.now();
-    if (now - lastOverlayLevelSentAt >= 50) {
+    if (now - lastOverlayLevelSentAt >= 35) {
       api.overlayAudioLevel?.(smoothedLevel);
       lastOverlayLevelSentAt = now;
     }
 
+    if (document.hidden || !canvas.clientWidth || !ctx) return;
+    analyser.getByteFrequencyData(dataArray);
+    const spectrumPeak = Math.max(1, ...dataArray);
     const size = canvas.clientWidth || 380;
     if (canvas.width !== size) { canvas.width = size; canvas.height = size; }
     const cx = canvas.width / 2;
@@ -1560,7 +1684,7 @@ function drawWaveform() {
     for (let i = 0; i < BAR_COUNT; i++) {
       const angle = (i / BAR_COUNT) * Math.PI * 2 - Math.PI / 2;
       const dataIndex = Math.floor((i / BAR_COUNT) * bufferLength * 0.7);
-      const value = dataArray[dataIndex] / 255;
+      const value = smoothedLevel * (0.3 + 0.7 * dataArray[dataIndex] / spectrumPeak);
       const len = 4 + value * maxLen;
 
       const x1 = cx + Math.cos(angle) * inner;
@@ -1569,9 +1693,7 @@ function drawWaveform() {
       const y2 = cy + Math.sin(angle) * (inner + len);
 
       // Colour ramps violet → pink → amber around the ring
-      const t = i / BAR_COUNT;
-      const color = t < 0.5 ? lerpColor(violet, pink, t * 2) : lerpColor(pink, amber, (t - 0.5) * 2);
-      ctx.strokeStyle = color;
+      ctx.strokeStyle = colors[i];
       ctx.globalAlpha = 0.35 + value * 0.65;
       ctx.lineWidth = 2.4;
       ctx.lineCap = 'round';
@@ -1583,21 +1705,6 @@ function drawWaveform() {
     ctx.globalAlpha = 1;
   }
   draw();
-}
-
-function calculateAudioLevel(samples, previousLevel = 0) {
-  if (!samples?.length) return 0;
-  let sumSquares = 0;
-  for (const sample of samples) {
-    const normalized = (sample - 128) / 128;
-    sumSquares += normalized * normalized;
-  }
-  const rms = Math.sqrt(sumSquares / samples.length);
-  // Ignore normal room/electrical noise, then scale typical speech into 0..1.
-  const gated = Math.max(0, Math.min(1, (rms - 0.018) / 0.22));
-  const smoothing = gated > previousLevel ? 0.58 : 0.22;
-  const level = previousLevel + (gated - previousLevel) * smoothing;
-  return level < 0.01 ? 0 : level;
 }
 
 // Small hex-color interpolator for the radial gradient ring
@@ -1624,67 +1731,10 @@ function clearWaveform() {
 function setupIpcListeners() {
   if (!api.onDictationStart) return;
 
-  api.onDictationStart(async () => {
-    if (!isRecording) {
-      await startRecording();
-    }
-  });
-
-  api.onDictationStop((mode) => {
-    if (isRecording) {
-      // Override the onstop to inject text
-      if (mediaRecorder) {
-        const originalStop = mediaRecorder.onstop;
-        mediaRecorder.onstop = async () => {
-          const stream = mediaRecorder.stream;
-          stream.getTracks().forEach(t => t.stop());
-          cancelAnimationFrame(animFrameId);
-          clearWaveform();
-          api.overlayAudioLevel?.(0);
-          const btn = document.getElementById('btnMicTest');
-          if (btn) btn.classList.remove('recording');
-          stopRecordingTimer();
-          if (audioChunks.length > 0) {
-            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-            await processAudio(audioBlob, 'dictate-inject');
-          }
-        };
-      }
-      stopRecording();
-    }
-  });
-
-  api.onCommandStart(async () => {
-    if (!isRecording) {
-      await startRecording();
-    }
-  });
-
-  if (api.onDictationCancel) {
-    api.onDictationCancel(() => {
-      if (isRecording) {
-        if (mediaRecorder) {
-          mediaRecorder.onstop = async () => {
-            const stream = mediaRecorder.stream;
-            stream.getTracks().forEach(t => t.stop());
-            cancelAnimationFrame(animFrameId);
-            clearWaveform();
-            api.overlayAudioLevel?.(0);
-            const btn = document.getElementById('btnMicTest');
-            if (btn) btn.classList.remove('recording');
-            stopRecordingTimer();
-            // DISCARD the audio chunks entirely
-            audioChunks = [];
-            
-            const outputEl = document.getElementById('testOutput');
-            if (outputEl) outputEl.innerHTML = '<span class="text-muted">Recording discarded.</span>';
-            showToast('Recording cancelled', 'info');
-          };
-        }
-        stopRecording();
-      }
-    });
-  }
+  api.onDictationStart(() => startRecording('dictate-inject'));
+  api.onDictationStop(() => stopRecording());
+  api.onCommandStart(() => startRecording('command'));
+  api.onDictationCancel?.(() => stopRecording(true));
 }
 
 // ============================================
@@ -1977,6 +2027,8 @@ async function detectAndApplyAutoStyle() {
 function renderAppRules() {
   const list = document.getElementById('appRulesList');
   if (!list) return;
+  if (list.dataset.rendered) return;
+  list.dataset.rendered = 'true';
   const map = window.APP_STYLE_MAP || {};
   const styles = window.BUILT_IN_STYLES || [];
 
@@ -2004,7 +2056,7 @@ function renderAppRules() {
       const iconUrl = window.getAppIconUrl?.(app.icon, 'ffffff') || '';
       return `
         <div class="app-rule-row">
-          <img class="app-rule-icon" src="${iconUrl}" alt="" onerror="this.style.display='none'">
+          <img class="app-rule-icon" loading="lazy" src="${iconUrl}" alt="" onerror="this.style.display='none'">
           <span class="app-rule-name">${escapeHtml(app.name)}</span>
           <span class="app-rule-style" style="background: ${style?.color || '#666'}22; color: ${style?.color || '#999'};">${style?.icon || ''} ${style?.name || app.styleId}</span>
         </div>
@@ -2073,6 +2125,10 @@ function renderFailedRecordings(recordings) {
 }
 
 async function retryFailedRecording(baseName) {
+  if (isRecording || isStartingRecording || isStoppingRecording || isProcessingAudio) {
+    showToast('Finish the current dictation before retrying a recording.', 'info');
+    return;
+  }
   const outputEl = document.getElementById('testOutput');
   if (outputEl) outputEl.innerHTML = '<span class="spinner"></span> Loading saved recording...';
   showToast('Retrying saved recording...', 'info');
@@ -2091,21 +2147,7 @@ async function retryFailedRecording(baseName) {
     const audioBlob = new Blob([bytes], { type: 'audio/webm' });
 
     // Process the audio (will retry internally too)
-    await processAudio(audioBlob, 'dictate-inject');
-
-    // If we get here without the audio being saved again, delete the old file
-    // Check if it still exists (processAudio may have re-saved on failure)
-    const remaining = await api.getFailedRecordings();
-    const stillExists = remaining.some(r => r.baseName === baseName);
-    if (stillExists) {
-      // processAudio must have succeeded before re-save, but let's check
-      // Actually if processAudio failed, it saved a NEW recording, so the old one is still there
-    } else {
-      showToast('Recording retried — but file was already cleaned up', 'info');
-    }
-
-    // Delete the original failed recording on success
-    await api.deleteFailedRecording(baseName);
+    await processAudio(audioBlob, 'dictate-inject', baseName);
     await loadFailedRecordings();
   } catch (e) {
     logError('retryFailedRecording', e);
@@ -2164,6 +2206,14 @@ window.__freesiaTest = {
   TRANSCRIBE_FALLBACK_MODELS,
   DEFAULT_GEMINI_MODEL,
   buildAudioConstraints,
-  calculateAudioLevel,
+  fetchJsonWithTimeout,
+  responseText,
+  formatWithAI,
+  renderUpdateStatus,
+  installUpdate,
+  openMicrophoneStream,
+  startRecording,
+  stopRecording,
+  processAudio,
   setSettings: (s) => { settings = s; }
 };

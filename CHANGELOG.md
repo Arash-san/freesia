@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.4.0
+
+The microphone display now adjusts to quiet and loud input. Both the Home waveform and shortcut overlay use the same normalized level, and the overlay stays responsive while the app is hidden in the tray.
+
+API requests now have deadlines, unavailable models temporarily leave the retry order, and formatting reuses the model that successfully transcribed the audio. Recording writes and folder scans no longer block the main process. Retries update the original saved recording instead of creating duplicate files or deleting the original after failure. Microphone cancellation and device loss now release recording resources consistently.
+
+The Home screen now includes an update control. Freesia checks repeatedly, detects releases published after an earlier download, and asks before installation. Confirmed updates install silently and reopen the app. Updates wait until dictation finishes.
+
+Diagnostic reporting is enabled for new installations with a visible switch on the first setup screen and in Settings. Existing preferences are preserved.
+
 ## 2.3.0
 
 - Confirmed Gemini 3.5 Flash-Lite as the new-install default and preferred dictation model.

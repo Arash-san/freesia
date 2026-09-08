@@ -14,15 +14,6 @@ test('microphone selection builds exact device constraints and supports system d
   assert.equal(build('usb-mic-123').deviceId.exact, 'usb-mic-123');
 });
 
-test('audio level stays flat for silence and rises for speech samples', async () => {
-  const { window } = await boot();
-  const calculate = window.__freesiaTest.calculateAudioLevel;
-  assert.equal(calculate(new Uint8Array(256).fill(128), 0), 0);
-  const speech = Uint8Array.from({ length: 256 }, (_, i) => i % 2 ? 168 : 88);
-  assert.ok(calculate(speech, 0) > 0.5);
-  assert.ok(calculate(new Uint8Array(256).fill(128), 0.8) < 0.8, 'level decays after speech stops');
-});
-
 test('settings expose a persisted microphone device list', async () => {
   const { document } = await boot();
   const select = document.getElementById('selectMicrophone');

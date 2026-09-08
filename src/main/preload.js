@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('freesia', {
 
   // Recording state sync
   recordingFailed: () => ipcRenderer.invoke('recording-failed'),
+  recordingState: (state) => ipcRenderer.send('recording-state', state),
 
   // External links
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
@@ -49,7 +50,7 @@ contextBridge.exposeInMainWorld('freesia', {
   logToFile: (level, context, message, stack) => ipcRenderer.invoke('log-to-file', level, context, message, stack),
 
   // Failed recordings
-  saveFailedAudio: (base64Data, metadata) => ipcRenderer.invoke('save-failed-audio', base64Data, metadata),
+  saveFailedAudio: (base64Data, metadata, existingBase) => ipcRenderer.invoke('save-failed-audio', base64Data, metadata, existingBase),
   getFailedRecordings: () => ipcRenderer.invoke('get-failed-recordings'),
   getFailedRecordingData: (filename) => ipcRenderer.invoke('get-failed-recording-data', filename),
   deleteFailedRecording: (baseName) => ipcRenderer.invoke('delete-failed-recording', baseName),
