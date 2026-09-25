@@ -3,12 +3,16 @@ const { createUpdateController } = require('./update-controller');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const Store = require('electron-store');
+const { createSecrets } = require('./secrets');
+const { createCloudEngine, createGeminiEngine, EngineError, DEFAULT_CLOUD_SERVER } = require('./engines');
+const { createLocalEngine } = require('./local-engine');
+const { createKeyHelper, snapshotClipboard, restoreClipboard } = require('./keys');
+const { createAppScanner } = require('./apps');
 
 // ============================================
 // One-time migration from the old "Dictaloom" install
-// Runs before the store is created so existing users keep
-// their API key, snippets, dictionary, history, and stats.
 // ============================================
 function migrateFromDictaloom() {
   try {
@@ -19,14 +23,11 @@ function migrateFromDictaloom() {
     if (!fs.existsSync(oldConfig)) return;
     fs.mkdirSync(app.getPath('userData'), { recursive: true });
     fs.copyFileSync(oldConfig, newConfig);
-    // Bring saved recordings along too
     const oldRecordings = path.join(oldDir, 'failed-recordings');
     if (fs.existsSync(oldRecordings)) {
       const newRecordings = path.join(app.getPath('userData'), 'failed-recordings');
       fs.mkdirSync(newRecordings, { recursive: true });
-      for (const f of fs.readdirSync(oldRecordings)) {
-        fs.copyFileSync(path.join(oldRecordings, f), path.join(newRecordings, f));
-      }
+      for (const f of fs.readdirSync(oldRecordings)) fs.copyFileSync(path.join(oldRecordings, f), path.join(newRecordings, f));
     }
   } catch (e) {
     console.error('Dictaloom migration failed:', e);
@@ -35,9 +36,9 @@ function migrateFromDictaloom() {
 migrateFromDictaloom();
 
 // ============================================
-// File-based Logger
+// File logger
 // ============================================
-const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_LOG_SIZE = 5 * 1024 * 1024;
 let logFilePath = null;
 
 function initLogger() {
@@ -47,63 +48,55 @@ function initLogger() {
 function writeLog(level, context, message, stack) {
   if (!logFilePath) return;
   try {
-    // Rotate if too large
-    if (fs.existsSync(logFilePath)) {
-      const stat = fs.statSync(logFilePath);
-      if (stat.size > MAX_LOG_SIZE) {
-        const oldPath = logFilePath + '.old';
-        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
-        fs.renameSync(logFilePath, oldPath);
-      }
+    if (fs.existsSync(logFilePath) && fs.statSync(logFilePath).size > MAX_LOG_SIZE) {
+      const oldPath = logFilePath + '.old';
+      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      fs.renameSync(logFilePath, oldPath);
     }
-    const ts = new Date().toISOString();
-    let entry = `[${ts}] [${level}] [${context}] ${message}\n`;
-    if (stack) entry += `  Stack: ${stack}\n`;
+    let entry = `[${new Date().toISOString()}] [${level}] [${context}] ${redact(String(message))}\n`;
+    if (stack) entry += `  Stack: ${redact(String(stack))}\n`;
     fs.appendFileSync(logFilePath, entry, 'utf-8');
   } catch (e) {
     console.error('Logger write failed:', e);
   }
 }
 
-// Catch main process errors
 process.on('uncaughtException', (err) => {
   writeLog('FATAL', 'main:uncaughtException', err.message, err.stack);
-  try { sendErrorReport({ level: 'FATAL', context: 'main:uncaughtException', message: err.message, stack: err.stack }); } catch (e) { /* never disrupt */ }
+  try { sendErrorReport({ level: 'FATAL', context: 'main:uncaughtException', message: err.message, stack: err.stack }); } catch { /* never disrupt */ }
   console.error('Uncaught Exception:', err);
 });
 process.on('unhandledRejection', (reason) => {
   const msg = reason instanceof Error ? reason.message : String(reason);
   const stack = reason instanceof Error ? reason.stack : '';
   writeLog('ERROR', 'main:unhandledRejection', msg, stack);
-  try { sendErrorReport({ level: 'ERROR', context: 'main:unhandledRejection', message: msg, stack }); } catch (e) { /* never disrupt */ }
+  try { sendErrorReport({ level: 'ERROR', context: 'main:unhandledRejection', message: msg, stack }); } catch { /* never disrupt */ }
   console.error('Unhandled Rejection:', reason);
 });
 
-// Single instance only. Multiple instances silently fight over the global
-// shortcut: a stale instance can own Ctrl+Shift+Space while its overlay is
-// dead, which is exactly "the popup stopped appearing".
+// Multiple instances silently fight over the global shortcut.
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
-if (!gotSingleInstanceLock) {
-  app.quit();
-}
-app.on('second-instance', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show();
-    mainWindow.focus();
-  }
-});
+if (!gotSingleInstanceLock) app.quit();
+app.on('second-instance', () => showMainWindow());
 
 const isNewInstall = !fs.existsSync(path.join(app.getPath('userData'), 'config.json'));
 const store = new Store({
   defaults: {
-    apiKey: '',
     onboarded: false,
     dictationShortcut: 'Ctrl+Shift+Space',
     commandShortcut: 'Ctrl+Shift+Alt+Space',
+    // Transcription engine: cloud (a Freesia Voice server), local, gemini
+    engine: isNewInstall ? 'cloud' : 'gemini',
+    engineFallback: true,
+    // Who formats text for styles: auto (cloud, then Gemini), cloud, gemini, off
+    formatter: 'auto',
     aiFormatting: true,
     geminiModel: 'gemini-3.5-flash-lite',
+    localModel: 'qwen3-asr-1.7b',
+    localUnloadMinutes: 20,
+    localUseGpu: true,
     microphoneId: '',
-    language: 'en',
+    language: 'auto',
     theme: 'system',
     autoLaunch: false,
     showOverlay: true,
@@ -117,26 +110,29 @@ const store = new Store({
     autoStyleSwitch: false,
     styleOverrides: {},
     keepSuccessRecordings: false,
-    // User-authored dictation styles (merged with the built-ins)
     customStyles: [],
-    // Opt-in processing tools that shape the formatted output
     toolTrimSpelling: false,
     toolSpokenEmoji: false,
     toolPolish: false,
-    // New installs disclose this default in onboarding; preserve existing choices.
     errorReporting: isNewInstall,
-    // Stable anonymous id so reports from one install group together
     installId: ''
   }
 });
 
-// Assign a stable anonymous install id once (used only to group reports)
-if (!store.get('installId')) {
-  store.set('installId', require('crypto').randomUUID());
-}
+if (!store.get('installId')) store.set('installId', require('crypto').randomUUID());
 
-// Where user/agent-authored style files live. Anything valid dropped here
-// is imported on launch. Documented for agents in AGENTS.md.
+const secrets = createSecrets(store);
+
+const cloud = createCloudEngine({ store, secrets, log: writeLog });
+const gemini = createGeminiEngine({ store, secrets, log: writeLog });
+const local = createLocalEngine({
+  userDataDir: app.getPath('userData'), store, secrets, log: writeLog,
+  onStatus: (s) => sendToMain('local-status', s)
+});
+const engines = { cloud, local, gemini };
+const appScanner = createAppScanner({ app, shell, log: writeLog });
+let keys = null;
+
 function getStylesDir() {
   const dir = path.join(app.getPath('userData'), 'styles');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -147,73 +143,38 @@ let mainWindow = null;
 let overlayWindow = null;
 let tray = null;
 let isRecording = false;
-let updateState = {
-  status: 'idle',
-  message: 'Update checks are ready.',
-  version: app.getVersion(),
-  isPackaged: app.isPackaged
-};
+let updateState = { status: 'idle', message: 'Update checks are ready.', version: app.getVersion(), isPackaged: app.isPackaged };
 
-function getThemeState() {
-  return {
-    source: nativeTheme.themeSource,
-    shouldUseDarkColors: nativeTheme.shouldUseDarkColors
-  };
+function sendToMain(channel, payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
 }
 
-function broadcastThemeState() {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('theme-updated', getThemeState());
-  }
+function getThemeState() {
+  return { source: nativeTheme.themeSource, shouldUseDarkColors: nativeTheme.shouldUseDarkColors };
 }
 
 function applyAppTheme(themeSource) {
   const nextSource = ['system', 'light', 'dark'].includes(themeSource) ? themeSource : 'system';
   nativeTheme.themeSource = nextSource;
   store.set('theme', nextSource);
-  broadcastThemeState();
+  sendToMain('theme-updated', getThemeState());
   return getThemeState();
 }
 
-function sanitizeUpdateInfo(info) {
-  if (!info) return null;
-  return {
-    version: info.version || '',
-    releaseName: info.releaseName || '',
-    releaseDate: info.releaseDate || '',
-    releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : ''
-  };
-}
-
 function sendUpdateStatus(status, extra = {}) {
-  updateState = {
-    ...updateState,
-    ...extra,
-    status,
-    version: app.getVersion(),
-    isPackaged: app.isPackaged
-  };
-
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('update-status', updateState);
-  }
-
+  updateState = { ...updateState, ...extra, status, version: app.getVersion(), isPackaged: app.isPackaged };
+  sendToMain('update-status', updateState);
   return updateState;
-}
-
-function serializeUpdateError(error) {
-  return error instanceof Error ? error.message : String(error || 'Update check failed.');
 }
 
 let updateController;
 function setupAutoUpdater() {
   autoUpdater.logger = {
-    info: (message) => writeLog('INFO', 'autoUpdater', String(message)),
-    warn: (message) => writeLog('WARN', 'autoUpdater', String(message)),
-    error: (message) => writeLog('ERROR', 'autoUpdater', String(message)),
-    debug: (message) => writeLog('DEBUG', 'autoUpdater', String(message))
+    info: (m) => writeLog('INFO', 'autoUpdater', String(m)),
+    warn: (m) => writeLog('WARN', 'autoUpdater', String(m)),
+    error: (m) => writeLog('ERROR', 'autoUpdater', String(m)),
+    debug: (m) => writeLog('DEBUG', 'autoUpdater', String(m))
   };
-
   updateController = createUpdateController({
     updater: autoUpdater, publish: sendUpdateStatus, packaged: app.isPackaged,
     canInstall: () => !isRecording && !isProcessing,
@@ -226,15 +187,21 @@ function setupAutoUpdater() {
   app.on('before-quit', () => updateController.stop());
 }
 
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
-    width: 1040,
-    height: 720,
-    minWidth: 860,
-    minHeight: 580,
+    width: 1140,
+    height: 780,
+    minWidth: 820,
+    minHeight: 600,
     frame: false,
-    transparent: false,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#14101c' : '#faf7f2',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0b0b0d' : '#efeeea',
     show: false,
     icon: path.join(__dirname, '..', '..', 'assets', 'icon.png'),
     webPreferences: {
@@ -242,37 +209,35 @@ function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      // The hidden-to-tray window hosts the recorder. Never throttle it,
-      // otherwise shortcuts appear dead after the app sits in the tray.
+      // The hidden-to-tray window hosts the recorder. Never throttle it.
       backgroundThrottling: false
     }
   });
-
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
-  });
-
+  mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.on('close', (e) => {
-    if (!app.isQuitting) {
-      e.preventDefault();
-      mainWindow.hide();
-    }
+    if (!app.isQuitting) { e.preventDefault(); mainWindow.hide(); }
   });
-
-  // If the renderer that owns recording dies, reset state and reload it
+  mainWindow.on('maximize', () => sendToMain('window-state', { maximized: true }));
+  mainWindow.on('unmaximize', () => sendToMain('window-state', { maximized: false }));
+  // Links in transcripts or docs open in the browser, never inside the app
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  mainWindow.webContents.on('will-navigate', (e) => e.preventDefault());
   mainWindow.webContents.on('render-process-gone', (_, details) => {
     writeLog('ERROR', 'mainWindow:render-process-gone', details.reason);
     isRecording = false;
     isProcessing = false;
     hideOverlay();
-    try { mainWindow.webContents.reload(); } catch (e) { /* recreated on next activate */ }
+    try { mainWindow.webContents.reload(); } catch { /* recreated on next activate */ }
   });
 }
 
-const OVERLAY_W = 300;
-const OVERLAY_H = 74;
+// The pill is 280x56; the window adds room for its shadow and bloom glow.
+const OVERLAY_W = 340;
+const OVERLAY_H = 104;
 
 function createOverlayWindow() {
   overlayWindow = new BrowserWindow({
@@ -284,6 +249,7 @@ function createOverlayWindow() {
     skipTaskbar: true,
     resizable: false,
     focusable: false,
+    hasShadow: false,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -292,40 +258,31 @@ function createOverlayWindow() {
       backgroundThrottling: false
     }
   });
-
   overlayWindow.loadFile(path.join(__dirname, '..', 'renderer', 'overlay.html'));
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
-  // Keep above fullscreen apps and never appear in screen shares oddly
   overlayWindow.setAlwaysOnTop(true, 'screen-saver', 1);
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-
   overlayWindow.webContents.on('render-process-gone', (_, details) => {
     writeLog('ERROR', 'overlay:render-process-gone', details.reason);
-    try { overlayWindow.destroy(); } catch (e) { /* ignore */ }
+    try { overlayWindow.destroy(); } catch { /* ignore */ }
     overlayWindow = null;
   });
 }
 
-// The overlay must always exist and always be on top when shown.
 function ensureOverlayWindow() {
-  if (!overlayWindow || overlayWindow.isDestroyed()) {
-    createOverlayWindow();
-  }
+  if (!overlayWindow || overlayWindow.isDestroyed()) createOverlayWindow();
   return overlayWindow;
 }
 
 function positionOverlay() {
-  // Follow the cursor's display so the pill is visible where the user works
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
   const { x: dx, y: dy, width: dw, height: dh } = display.workArea;
-
   const saved = store.get('overlayPosition');
   let x = Math.round(dx + (dw - OVERLAY_W) / 2);
-  let y = dy + dh - OVERLAY_H - 48;
+  let y = dy + dh - OVERLAY_H - 28;
   if (saved && saved.x >= 0 && saved.y >= 0) {
-    // Respect a saved position only if it is still on a connected display
-    const onScreen = screen.getAllDisplays().some(d =>
+    const onScreen = screen.getAllDisplays().some((d) =>
       saved.x >= d.workArea.x && saved.x < d.workArea.x + d.workArea.width &&
       saved.y >= d.workArea.y && saved.y < d.workArea.y + d.workArea.height);
     if (onScreen) { x = saved.x; y = saved.y; }
@@ -333,83 +290,77 @@ function positionOverlay() {
   overlayWindow.setBounds({ x, y, width: OVERLAY_W, height: OVERLAY_H });
 }
 
-function showOverlay(state) {
+let overlayHideTimer = null;
+function showOverlay(state, info) {
   if (!store.get('showOverlay')) return;
+  clearTimeout(overlayHideTimer);
   const win = ensureOverlayWindow();
   positionOverlay();
-  // Re-assert topmost every time: Windows silently demotes always-on-top
-  // when other topmost windows churn, which made the pill stop appearing.
+  // Re-assert topmost every time: Windows silently demotes always-on-top.
   win.setAlwaysOnTop(true, 'screen-saver', 1);
   win.showInactive();
-  win.webContents.send('overlay-state', state);
+  win.webContents.send('overlay-state', { state, ...info });
+}
+
+function setOverlay(state, info, hideAfterMs) {
+  clearTimeout(overlayHideTimer);
+  sendOverlay('overlay-state', { state, ...info });
+  if (hideAfterMs) overlayHideTimer = setTimeout(hideOverlay, hideAfterMs);
 }
 
 function hideOverlay() {
-  if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.hide();
+  clearTimeout(overlayHideTimer);
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.webContents.send('overlay-state', { state: 'hidden' });
+    // Give the pill its exit animation before the window disappears
+    setTimeout(() => { if (overlayWindow && !overlayWindow.isDestroyed() && !isRecording && !isProcessing) overlayWindow.hide(); }, 260);
+  }
 }
 
 function sendOverlay(channel, payload) {
-  if (overlayWindow && !overlayWindow.isDestroyed()) {
-    overlayWindow.webContents.send(channel, payload);
-  }
+  if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.webContents.send(channel, payload);
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, '..', '..', 'assets', 'icon.png');
   let trayIcon;
   try {
-    trayIcon = nativeImage.createFromPath(iconPath);
-    trayIcon = trayIcon.resize({ width: 16, height: 16 });
-  } catch (e) {
+    const trayPath = path.join(__dirname, '..', '..', 'assets', 'tray.png');
+    trayIcon = nativeImage.createFromPath(fs.existsSync(trayPath) ? trayPath : path.join(__dirname, '..', '..', 'assets', 'icon.png')).resize({ width: 16, height: 16, quality: 'best' });
+  } catch {
     trayIcon = nativeImage.createEmpty();
   }
-
   tray = new Tray(trayIcon);
-
-  const contextMenu = Menu.buildFromTemplate([
-    { label: 'Show Freesia', click: () => mainWindow && mainWindow.show() },
+  tray.setToolTip('Freesia');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open Freesia', click: () => showMainWindow() },
     { type: 'separator' },
-    { label: 'Start Dictation', click: () => startDictation() },
+    { label: 'Start dictation', click: () => handleShortcut('dictate') },
     { type: 'separator' },
-    {
-      label: 'Quit',
-      click: () => {
-        app.isQuitting = true;
-        app.quit();
-      }
-    }
-  ]);
-
-  tray.setToolTip('Freesia - AI Voice Dictation');
-  tray.setContextMenu(contextMenu);
-  tray.on('double-click', () => mainWindow && mainWindow.show());
+    { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } }
+  ]));
+  tray.on('click', () => showMainWindow());
 }
 
+function toAccelerator(shortcut) {
+  return String(shortcut || '').replace(/\bCtrl\b/g, 'CommandOrControl');
+}
+
+// Returns which shortcuts registered so the UI can flag conflicts.
 function registerShortcuts() {
   globalShortcut.unregisterAll();
-
-  const dictShortcut = store.get('dictationShortcut') || 'Ctrl+Shift+Space';
-  const cmdShortcut = store.get('commandShortcut') || 'Ctrl+Shift+Alt+Space';
-
-  try {
-    const electronDictShortcut = dictShortcut.replace('Ctrl', 'CommandOrControl');
-    const ok = globalShortcut.register(electronDictShortcut, () => {
-      handleShortcut('dictate');
-    });
-    if (!ok) writeLog('WARN', 'shortcuts', `Could not register ${dictShortcut} — another app may already own it`);
-  } catch (e) {
-    writeLog('ERROR', 'shortcuts', `Failed to register dictation shortcut: ${e.message}`, e.stack);
+  const result = {};
+  for (const [key, mode, fallback] of [['dictationShortcut', 'dictate', 'Ctrl+Shift+Space'], ['commandShortcut', 'command', 'Ctrl+Shift+Alt+Space']]) {
+    const shortcut = store.get(key) || fallback;
+    try {
+      result[key] = globalShortcut.register(toAccelerator(shortcut), () => handleShortcut(mode));
+      if (!result[key]) writeLog('WARN', 'shortcuts', `Could not register ${shortcut}; another app may own it`);
+    } catch (e) {
+      result[key] = false;
+      writeLog('ERROR', 'shortcuts', `Failed to register ${shortcut}: ${e.message}`, e.stack);
+    }
   }
-
-  try {
-    const electronCmdShortcut = cmdShortcut.replace('Ctrl', 'CommandOrControl');
-    const ok = globalShortcut.register(electronCmdShortcut, () => {
-      handleShortcut('command');
-    });
-    if (!ok) writeLog('WARN', 'shortcuts', `Could not register ${cmdShortcut} — another app may already own it`);
-  } catch (e) {
-    writeLog('ERROR', 'shortcuts', `Failed to register command shortcut: ${e.message}`, e.stack);
-  }
+  if (isRecording) globalShortcut.register('Escape', cancelDictation);
+  return result;
 }
 
 // Debounce and state machine for shortcut handling
@@ -417,14 +368,12 @@ let lastShortcutTime = 0;
 let isProcessing = false;
 let processingSince = 0;
 const SHORTCUT_COOLDOWN_MS = 350;
-const PROCESSING_STUCK_MS = 180000;
+const PROCESSING_STUCK_MS = 600000;
 
 function handleShortcut(mode) {
   const now = Date.now();
-  // Ignore rapid-fire from key repeat
   if (now - lastShortcutTime < SHORTCUT_COOLDOWN_MS) return;
   lastShortcutTime = now;
-
   // Never let a stale processing flag eat shortcuts forever
   if (isProcessing && now - processingSince > PROCESSING_STUCK_MS) {
     writeLog('WARN', 'handleShortcut', 'Clearing stuck processing state');
@@ -432,47 +381,39 @@ function handleShortcut(mode) {
     hideOverlay();
   }
   if (isProcessing) return;
-
-  if (isRecording) {
-    stopDictation(mode);
-  } else {
-    if (mode === 'command') {
-      startCommandMode();
-    } else {
-      startDictation();
-    }
-  }
+  if (isRecording) stopDictation(mode);
+  else if (mode === 'command') startCommandMode();
+  else startDictation();
 }
 
 function startDictation() {
   isRecording = true;
   globalShortcut.register('Escape', cancelDictation);
-  if (mainWindow) mainWindow.webContents.send('dictation-start');
-  showOverlay('listening');
+  sendToMain('dictation-start');
+  showOverlay('listening', { mode: 'dictate' });
 }
 
 function stopDictation(mode = 'dictate') {
-  if (!isRecording) return; // Guard against double-stop
+  if (!isRecording) return;
   isRecording = false;
   isProcessing = true;
   processingSince = Date.now();
   globalShortcut.unregister('Escape');
-  if (mainWindow) mainWindow.webContents.send('dictation-stop', mode);
-  sendOverlay('overlay-state', 'processing');
-  // Safety timeout: reset processing state if renderer never responds
-  setTimeout(() => {
-    if (isProcessing && Date.now() - processingSince >= PROCESSING_STUCK_MS - 1000) {
-      isProcessing = false;
-      hideOverlay();
-    }
-  }, PROCESSING_STUCK_MS);
+  sendToMain('dictation-stop', mode);
+  setOverlay('processing');
 }
 
-function startCommandMode() {
+// Command mode edits the selection by voice, so grab the selection first
+// (2.x never read it, so commands had nothing to edit).
+async function startCommandMode() {
   isRecording = true;
   globalShortcut.register('Escape', cancelDictation);
-  if (mainWindow) mainWindow.webContents.send('command-start');
-  showOverlay('listening');
+  showOverlay('listening', { mode: 'command' });
+  let selection = '';
+  try { selection = await captureSelection(); } catch (e) { writeLog('WARN', 'command', `Selection capture failed: ${e.message}`); }
+  if (!isRecording) return;
+  sendToMain('command-start', { selection });
+  if (!selection) setOverlay('listening', { mode: 'command', hint: 'No selection: will write new text' });
 }
 
 function cancelDictation() {
@@ -480,278 +421,304 @@ function cancelDictation() {
   isRecording = false;
   isProcessing = false;
   globalShortcut.unregister('Escape');
-  if (mainWindow) mainWindow.webContents.send('dictation-cancel');
+  sendToMain('dictation-cancel');
   hideOverlay();
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// PowerShell that sends a HARDWARE SCAN-CODE Ctrl+V via SendInput. Virtual-key
-// input (the old SendKeys approach) is ignored by AnyDesk/RDP/Citrix/TeamViewer
-// and many games, which capture keyboard at the raw scan-code level — so their
-// remote sessions never received the paste. Scan-code input is forwarded like a
-// real keypress and also works for ordinary local apps.
-const PASTE_SCANCODE_PS = `
-$ErrorActionPreference = 'Stop'
-$sig = @"
-using System;
-using System.Runtime.InteropServices;
-public class FreesiaKbd {
-  [StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public InputUnion U; }
-  [StructLayout(LayoutKind.Explicit)] struct InputUnion { [FieldOffset(0)] public KEYBDINPUT ki; }
-  [StructLayout(LayoutKind.Sequential)] struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
-  [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-  const uint INPUT_KEYBOARD=1; const uint KEYEVENTF_KEYUP=0x0002; const uint KEYEVENTF_SCANCODE=0x0008;
-  static INPUT K(ushort scan, bool up){ var i=new INPUT{ type=INPUT_KEYBOARD }; i.U.ki=new KEYBDINPUT{ wVk=0, wScan=scan, dwFlags=KEYEVENTF_SCANCODE | (up?KEYEVENTF_KEYUP:0), time=0, dwExtraInfo=IntPtr.Zero }; return i; }
-  public static uint Paste(){
-    // LeftCtrl = 0x1D, V = 0x2F (set-1 scan codes)
-    var a = new INPUT[]{ K(0x1D,false), K(0x2F,false), K(0x2F,true), K(0x1D,true) };
-    return SendInput((uint)a.Length, a, Marshal.SizeOf(typeof(INPUT)));
+async function captureSelection() {
+  const snap = snapshotClipboard(clipboard);
+  const sentinel = `⁣freesia-${Date.now()}`;
+  clipboard.writeText(sentinel);
+  const ok = await keys.copy();
+  let selection = '';
+  if (ok) {
+    for (let i = 0; i < 8; i++) {
+      await sleep(40);
+      const now = clipboard.readText();
+      if (now !== sentinel) { selection = now; break; }
+    }
   }
-}
-"@
-Add-Type -TypeDefinition $sig
-$n = [FreesiaKbd]::Paste()
-if ($n -lt 4) { exit 1 }
-`;
-
-let pasteScriptPath = null;
-function getPasteScriptPath() {
-  if (pasteScriptPath && fs.existsSync(pasteScriptPath)) return pasteScriptPath;
-  const p = path.join(app.getPath('userData'), 'paste-scancode.ps1');
-  fs.writeFileSync(p, PASTE_SCANCODE_PS, 'utf-8');
-  pasteScriptPath = p;
-  return p;
+  restoreClipboard(clipboard, snap);
+  return selection.slice(0, 20000);
 }
 
-function runPowerShell(args, timeout = 8000) {
+async function pasteSendKeysFallback() {
   const { execFile } = require('child_process');
   return new Promise((resolve) => {
-    execFile('powershell.exe', args, { windowsHide: true, timeout }, (err) => resolve(!err));
+    execFile('powershell.exe', ['-NoProfile', '-Command', "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^v')"],
+      { windowsHide: true, timeout: 8000 }, (err) => resolve(!err));
   });
 }
 
-// Preferred: hardware scan-code Ctrl+V (works over AnyDesk/RDP and locally)
-function pasteScancode() {
-  return runPowerShell(['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', getPasteScriptPath()]);
-}
-
-// Fallback: legacy virtual-key SendKeys, for the rare host where SendInput fails
-function pasteSendKeys() {
-  return runPowerShell(['-NoProfile', '-Command', "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^v')"]);
-}
-
 async function injectText(text) {
-  const savedClipboard = clipboard.readText();
+  const snap = snapshotClipboard(clipboard);
   clipboard.writeText(text);
-
-  // Let clipboard managers and remote-desktop clients (AnyDesk, RDP) observe
-  // and sync the new clipboard content before we send the paste keystroke,
-  // otherwise the remote side can paste stale content.
-  await sleep(140);
-
+  // Let clipboard managers and remote-desktop clients sync before pasting
+  await sleep(120);
   let method = 'scan-code';
-  let ok = await pasteScancode();
+  let ok = await keys.paste();
   if (!ok) {
     writeLog('WARN', 'inject', 'Scan-code paste failed, trying SendKeys fallback');
-    ok = await pasteSendKeys();
+    ok = await pasteSendKeysFallback();
     method = 'SendKeys-fallback';
   }
-
   if (!ok) {
-    // Do NOT restore the old clipboard on failure: leave the transcript there
-    // so the user can paste it manually with Ctrl+V.
+    // Leave the transcript in the clipboard so the user can paste it
     writeLog('ERROR', 'inject', 'Paste failed; transcript left in clipboard for manual Ctrl+V');
     return false;
   }
-
   writeLog('INFO', 'inject', `Pasted ${text.length} chars (${method})`);
-  // Restore clipboard after a delay long enough for a remote paste to complete
   setTimeout(() => {
-    clipboard.writeText(savedClipboard || '');
+    // Only restore if nothing else replaced the clipboard meanwhile
+    if (clipboard.readText() === text) restoreClipboard(clipboard, snap);
   }, 900);
   return true;
 }
 
-// IPC Handlers
-ipcMain.handle('get-settings', () => store.store);
+// ============================================
+// IPC: settings (secrets and account data are never exposed)
+// ============================================
+const PRIVATE_KEYS = new Set(['secrets', 'cloud', 'apiKey', 'installId']);
+function publicSettings() {
+  const out = { ...store.store };
+  for (const k of PRIVATE_KEYS) delete out[k];
+  return out;
+}
+ipcMain.handle('get-settings', () => publicSettings());
 ipcMain.handle('set-setting', (_, key, value) => {
-  if (value === undefined || value === null) {
-    store.delete(key);
-  } else {
-    store.set(key, value);
-  }
+  if (typeof key !== 'string' || PRIVATE_KEYS.has(key.split('.')[0])) return false;
+  if (value === undefined || value === null) store.delete(key);
+  else store.set(key, value);
   return true;
 });
-ipcMain.handle('get-setting', (_, key) => store.get(key));
+ipcMain.handle('get-setting', (_, key) => (PRIVATE_KEYS.has(String(key).split('.')[0]) ? undefined : store.get(key)));
 
 ipcMain.handle('get-foreground-app', async () => {
   const { exec } = require('child_process');
   return new Promise((resolve) => {
-    const psCmd = `(Get-Process | Where-Object { $_.MainWindowHandle -eq (Add-Type -MemberDefinition '[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();' -Name 'Win32' -Namespace Win32 -PassThru)::GetForegroundWindow() }).Name`;
-    exec(`powershell -NoProfile -Command "${psCmd}"`, { windowsHide: true, timeout: 3000 }, (err, stdout) => {
-      if (err) { resolve(''); return; }
-      resolve((stdout || '').trim().toLowerCase());
-    });
+    const psCmd = `(Get-Process | Where-Object { $_.MainWindowHandle -eq (Add-Type -MemberDefinition '[DllImport(\\"user32.dll\\")] public static extern IntPtr GetForegroundWindow();' -Name 'Win32' -Namespace Win32 -PassThru)::GetForegroundWindow() }).Name`;
+    exec(`powershell -NoProfile -Command "${psCmd}"`, { windowsHide: true, timeout: 3000 }, (err, stdout) => resolve(err ? '' : (stdout || '').trim().toLowerCase()));
   });
 });
 
-ipcMain.handle('inject-text', async (_, text) => {
-  return await injectText(text);
-});
+ipcMain.handle('inject-text', (_, text) => injectText(String(text || '')));
+ipcMain.handle('copy-text', (_, text) => { clipboard.writeText(String(text || '')); return true; });
 
-ipcMain.handle('copy-text', (_, text) => {
-  clipboard.writeText(String(text || ''));
-  return true;
-});
+ipcMain.handle('minimize-window', () => mainWindow?.minimize());
+ipcMain.handle('toggle-maximize-window', () => { if (!mainWindow) return; mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize(); });
+ipcMain.handle('close-window', () => mainWindow?.hide());
 
-ipcMain.handle('minimize-window', () => mainWindow && mainWindow.minimize());
-ipcMain.handle('close-window', () => mainWindow && mainWindow.hide());
-
-// Renderer failed to start recording (mic denied, device missing).
 ipcMain.on('recording-state', (_, state) => {
   isRecording = state === 'recording';
   isProcessing = state === 'processing';
-  if (isProcessing) { processingSince = Date.now(); sendOverlay('overlay-state', 'processing'); }
+  if (isProcessing) { processingSince = Date.now(); setOverlay('processing'); }
   if (isRecording) globalShortcut.register('Escape', cancelDictation);
   else globalShortcut.unregister('Escape');
 });
-// Without this, main-process state stayed "recording" and the next
-// shortcut press behaved like a stop — looking like a dead hotkey.
-ipcMain.handle('recording-failed', () => {
+ipcMain.handle('recording-failed', (_, message) => {
   isRecording = false;
   isProcessing = false;
   globalShortcut.unregister('Escape');
-  sendOverlay('overlay-state', 'error');
-  setTimeout(() => hideOverlay(), 2000);
+  setOverlay('error', { message: String(message || 'Could not record') }, 2600);
 });
-
-ipcMain.handle('overlay-done', () => {
+ipcMain.handle('overlay-done', (_, info) => {
   isProcessing = false;
-  sendOverlay('overlay-state', 'done');
-  setTimeout(() => hideOverlay(), 1500);
+  setOverlay('done', info || {}, 1700);
 });
-
-ipcMain.handle('overlay-error', () => {
+ipcMain.handle('overlay-error', (_, message) => {
   isProcessing = false;
-  sendOverlay('overlay-state', 'error');
-  setTimeout(() => hideOverlay(), 2000);
+  setOverlay('error', { message: String(message || 'Something went wrong') }, 3200);
 });
+ipcMain.handle('overlay-progress', (_, info) => setOverlay('processing', info || {}));
+ipcMain.handle('overlay-hide', () => { isProcessing = false; hideOverlay(); });
+ipcMain.handle('overlay-timer', (_, timeStr) => sendOverlay('overlay-timer', timeStr));
+ipcMain.on('overlay-audio-level', (_, level) => sendOverlay('overlay-audio-level', Math.max(0, Math.min(1, Number(level) || 0))));
 
-ipcMain.handle('overlay-hide', () => {
-  isProcessing = false;
-  hideOverlay();
+ipcMain.handle('open-external', (_, url) => {
+  if (/^https:\/\//.test(String(url))) return shell.openExternal(url);
+  return false;
 });
-
-ipcMain.handle('overlay-timer', (_, timeStr) => {
-  sendOverlay('overlay-timer', timeStr);
-});
-
-// Forward the recorder's real microphone level to the always-on-top overlay.
-// This is a fire-and-forget event because it is sent several times per second.
-ipcMain.on('overlay-audio-level', (_, level) => {
-  const safeLevel = Math.max(0, Math.min(1, Number(level) || 0));
-  sendOverlay('overlay-audio-level', safeLevel);
-});
-
-ipcMain.handle('open-external', (_, url) => shell.openExternal(url));
 
 ipcMain.handle('register-shortcuts', () => registerShortcuts());
+ipcMain.handle('set-shortcut', (_, key, value) => {
+  if (!['dictationShortcut', 'commandShortcut'].includes(key)) return { ok: false };
+  const previous = store.get(key);
+  store.set(key, value);
+  const result = registerShortcuts();
+  if (!result[key]) {
+    store.set(key, previous);
+    registerShortcuts();
+    return { ok: false, message: `${value} is already used by another app or Windows.` };
+  }
+  return { ok: true };
+});
+// While the user records a new shortcut, the old ones must not fire
+ipcMain.handle('suspend-shortcuts', () => { globalShortcut.unregisterAll(); return true; });
 
 ipcMain.handle('get-theme-info', () => getThemeState());
 ipcMain.handle('set-app-theme', (_, themeSource) => applyAppTheme(themeSource));
-
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('get-update-status', () => updateState);
-
 ipcMain.handle('check-for-updates', () => updateController.check(true));
 ipcMain.handle('download-update', () => updateController.download());
 ipcMain.handle('install-update', () => updateController.install());
 
 ipcMain.handle('set-auto-launch', (_, enabled) => {
-  app.setLoginItemSettings({ openAtLogin: enabled });
-  store.set('autoLaunch', enabled);
+  app.setLoginItemSettings({ openAtLogin: !!enabled });
+  store.set('autoLaunch', !!enabled);
 });
 
-ipcMain.handle('save-and-open-log', async (_, logContent) => {
-  // Open the persistent log file instead of writing a temp one
+ipcMain.handle('open-log', async () => {
   const persistentLog = path.join(app.getPath('userData'), 'freesia.log');
-  // Also append the renderer error log for completeness
-  if (logContent && logContent !== 'No errors recorded.') {
-    fs.appendFileSync(persistentLog, '\n--- Renderer Error Log Snapshot ---\n' + logContent + '\n', 'utf-8');
-  }
+  if (!fs.existsSync(persistentLog)) fs.writeFileSync(persistentLog, '', 'utf-8');
   shell.openPath(persistentLog);
   return persistentLog;
 });
+ipcMain.handle('log-to-file', (_, level, context, message, stack) => { writeLog(level, context, message, stack); return true; });
 
-// Log from renderer
-ipcMain.handle('log-to-file', async (_, level, context, message, stack) => {
-  writeLog(level, context, message, stack);
-  return true;
+// ============================================
+// IPC: engines
+// ============================================
+function engineStatus() {
+  return {
+    engine: store.get('engine'),
+    formatter: store.get('formatter'),
+    cloud: cloud.status(),
+    local: local.status(),
+    gemini: gemini.status()
+  };
+}
+
+function serializeError(e) {
+  return { error: { code: e?.code || 'server', message: e?.message || String(e) } };
+}
+
+ipcMain.handle('engine:status', () => engineStatus());
+ipcMain.handle('engine:set', (_, key, value) => {
+  if (key === 'engine' && engines[value]) store.set('engine', value);
+  if (key === 'formatter' && ['auto', 'cloud', 'gemini', 'off'].includes(value)) store.set('formatter', value);
+  if (key === 'engine' && value === 'local') local.start().catch((e) => writeLog('WARN', 'local', `Warm start failed: ${e.message}`));
+  return engineStatus();
 });
 
-// Failed recordings management
+// payload: { engine, audio: ArrayBuffer, mime, wav: ArrayBuffer|null, language, prompt, instruction, durationSec }
+ipcMain.handle('engine:transcribe', async (event, payload) => {
+  const engine = engines[payload?.engine];
+  if (!engine) return serializeError(new EngineError('config', 'Unknown engine'));
+  try {
+    const args = {
+      audio: Buffer.from(payload.audio || new ArrayBuffer(0)),
+      wav: payload.wav ? Buffer.from(payload.wav) : null,
+      mime: String(payload.mime || 'audio/webm'),
+      language: payload.language,
+      prompt: payload.prompt,
+      instruction: payload.instruction,
+      durationSec: Number(payload.durationSec) || 0,
+      onRetry: (model) => event.sender.send('engine-retry', { engine: 'gemini', model })
+    };
+    if (engine === local && !args.wav) throw new EngineError('audio', 'The on-device engine needs WAV audio');
+    const result = await engine.transcribe(args);
+    return { ...result, engine: engine.id };
+  } catch (e) {
+    writeLog('WARN', `transcribe:${payload.engine}`, `${e.code || ''} ${e.message}`);
+    return serializeError(e);
+  }
+});
+
+ipcMain.handle('engine:format', async (_, { engine, prompt, temperature }) => {
+  const target = engine === 'cloud' ? cloud : engine === 'gemini' ? gemini : null;
+  if (!target) return serializeError(new EngineError('config', 'No formatter'));
+  try {
+    // Long dictations produce long outputs; allow ~1 s per 40 words on top of a base
+    const timeoutMs = Math.min(180000, 25000 + String(prompt || '').length * 4);
+    return { text: await target.format(String(prompt || ''), { temperature, timeoutMs }) };
+  } catch (e) {
+    writeLog('WARN', `format:${engine}`, `${e.code || ''} ${e.message}`);
+    return serializeError(e);
+  }
+});
+
+const wrap = (fn) => async (...args) => { try { return await fn(...args); } catch (e) { return serializeError(e); } };
+ipcMain.handle('cloud:login', wrap((_, server, username, password) =>
+  cloud.login(server, String(username || ''), String(password || ''), `Freesia on ${os.hostname()}`)));
+ipcMain.handle('cloud:logout', wrap(() => cloud.logout()));
+ipcMain.handle('cloud:health', wrap(() => cloud.health()));
+ipcMain.handle('cloud:open-account', () => { const s = cloud.status().server; return s ? shell.openExternal(s) : false; });
+ipcMain.handle('gemini:set-key', wrap((_, key) => gemini.setKey(key)));
+ipcMain.handle('gemini:refresh-models', wrap(() => gemini.refreshModels()));
+ipcMain.handle('local:install', wrap((_, modelId) => local.install(modelId)));
+ipcMain.handle('local:cancel', () => local.cancelInstall());
+ipcMain.handle('local:remove', wrap((_, modelId) => local.remove(modelId)));
+ipcMain.handle('local:start', wrap(async () => { await local.start(); return local.status(); }));
+ipcMain.handle('local:stop', wrap(async () => { await local.stop(); return local.status(); }));
+ipcMain.handle('local:select', wrap(async (_, modelId) => { store.set('localModel', modelId); await local.stop(); return local.status(); }));
+ipcMain.handle('local:open-folder', () => {
+  const dir = path.join(app.getPath('userData'), 'engines');
+  fs.mkdirSync(dir, { recursive: true });
+  return shell.openPath(dir);
+});
+
+// ============================================
+// Saved recordings
+// ============================================
 function getFailedDir() {
   const dir = path.join(app.getPath('userData'), 'failed-recordings');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
+const validBase = (b) => /^recording-[\w-]+$/.test(String(b || ''));
 
-ipcMain.handle('save-failed-audio', async (_, base64Data, metadata, existingBase) => {
+ipcMain.handle('save-failed-audio', async (_, audio, metadata, existingBase) => {
   const dir = getFailedDir();
-  if (existingBase && !/^recording-[\w-]+$/.test(existingBase)) throw new Error('Invalid recording id');
+  if (existingBase && !validBase(existingBase)) throw new Error('Invalid recording id');
   const base = existingBase || `recording-${Date.now()}-${require('crypto').randomUUID()}`;
-  if (base64Data !== null) await fs.promises.writeFile(path.join(dir, base + '.webm'), Buffer.from(base64Data, 'base64'));
+  if (audio) await fs.promises.writeFile(path.join(dir, base + '.webm'), Buffer.from(audio));
   await fs.promises.writeFile(path.join(dir, base + '.json'), JSON.stringify(metadata, null, 2), 'utf-8');
   return base;
 });
 
 ipcMain.handle('get-failed-recordings', async () => {
   const dir = getFailedDir();
-  const files = (await fs.promises.readdir(dir)).filter(f => f.endsWith('.webm'));
+  const files = (await fs.promises.readdir(dir)).filter((f) => f.endsWith('.webm'));
   const entries = [];
   for (const f of files) {
     const base = f.replace('.webm', '');
-    const metaPath = path.join(dir, base + '.json');
     let meta = {};
-    try { meta = JSON.parse(await fs.promises.readFile(metaPath, 'utf-8')); }
-    catch (e) { /* Audio remains recoverable even if metadata could not be saved. */ }
+    try { meta = JSON.parse(await fs.promises.readFile(path.join(dir, base + '.json'), 'utf-8')); } catch { /* audio still recoverable */ }
     try {
       const stat = await fs.promises.stat(path.join(dir, f));
       entries.push({ filename: f, baseName: base, sizeMB: (stat.size / 1024 / 1024).toFixed(1), ...meta });
-    } catch (e) { /* a recording may be removed during enumeration */ }
+    } catch { /* removed during enumeration */ }
   }
   return entries.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
 });
 
-ipcMain.handle('get-failed-recording-data', async (_, filename) => {
-  const filePath = path.join(getFailedDir(), filename);
+ipcMain.handle('get-failed-recording-data', async (_, baseName) => {
+  if (!validBase(baseName)) return null;
+  const filePath = path.join(getFailedDir(), baseName + '.webm');
   if (!fs.existsSync(filePath)) return null;
-  const buffer = fs.readFileSync(filePath);
-  return buffer.toString('base64');
+  const buf = await fs.promises.readFile(filePath);
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
 });
 
 ipcMain.handle('delete-failed-recording', async (_, baseName) => {
+  if (!validBase(baseName)) return false;
   const dir = getFailedDir();
-  const audioPath = path.join(dir, baseName + '.webm');
-  const metaPath = path.join(dir, baseName + '.json');
-  if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
-  if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
+  for (const ext of ['.webm', '.json']) {
+    const p = path.join(dir, baseName + ext);
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+  }
   return true;
 });
 
-// Reveal a saved recording in Windows Explorer, with the file selected
 ipcMain.handle('show-recording-in-folder', (_, baseName) => {
   const audioPath = path.join(getFailedDir(), baseName + '.webm');
-  if (fs.existsSync(audioPath)) {
-    shell.showItemInFolder(audioPath);
-    return true;
-  }
-  // File already cleaned up — just open the folder
+  if (validBase(baseName) && fs.existsSync(audioPath)) { shell.showItemInFolder(audioPath); return true; }
   shell.openPath(getFailedDir());
   return false;
 });
-
 ipcMain.handle('open-recordings-folder', () => shell.openPath(getFailedDir()));
 
 // ============================================
@@ -766,27 +733,25 @@ function coerceStyle(raw) {
   return {
     id: String(raw.id || `custom-${slug}`),
     name: name.slice(0, 40),
-    icon: String(raw.icon || '✨').slice(0, 4),
-    color: /^#[0-9a-fA-F]{6}$/.test(raw.color || '') ? raw.color : '#A78BFA',
+    icon: [...String(raw.icon || '✨')].slice(0, 2).join(''),
+    color: /^#[0-9a-fA-F]{6}$/.test(raw.color || '') ? raw.color : '#B69CFF',
     description: String(raw.description || '').slice(0, 120),
     prompt: prompt.slice(0, 4000),
     custom: true
   };
 }
 
-// Parse a file's JSON into zero or more styles. Accepts a single style
-// object, an array of styles, or { styles: [...] }.
 function parseStylesFromJson(text) {
   let data;
-  try { data = JSON.parse(text); } catch (e) { return []; }
-  const list = Array.isArray(data) ? data : Array.isArray(data.styles) ? data.styles : [data];
+  try { data = JSON.parse(text); } catch { return []; }
+  const list = Array.isArray(data) ? data : Array.isArray(data?.styles) ? data.styles : [data];
   return list.map(coerceStyle).filter(Boolean);
 }
 
+ipcMain.handle('apps:scan', (_, force, wanted) => appScanner.scan(!!force, Array.isArray(wanted) ? wanted : null).catch((e) => { writeLog('WARN', 'apps', e.message); return []; }));
+ipcMain.handle('apps:running', () => appScanner.running().catch(() => []));
 ipcMain.handle('get-styles-dir', () => getStylesDir());
 ipcMain.handle('open-styles-folder', () => shell.openPath(getStylesDir()));
-
-// Scan the styles folder and return every valid style found there
 ipcMain.handle('import-styles-from-disk', () => {
   const dir = getStylesDir();
   const out = [];
@@ -797,13 +762,9 @@ ipcMain.handle('import-styles-from-disk', () => {
   }
   return out;
 });
-
-// Let the user pick a .json style file to import
 ipcMain.handle('import-style-file', async () => {
   const res = await dialog.showOpenDialog(mainWindow, {
-    title: 'Import Freesia style',
-    filters: [{ name: 'Freesia style', extensions: ['json'] }],
-    properties: ['openFile', 'multiSelections']
+    title: 'Import Freesia style', filters: [{ name: 'Freesia style', extensions: ['json'] }], properties: ['openFile', 'multiSelections']
   });
   if (res.canceled) return [];
   const out = [];
@@ -817,10 +778,8 @@ ipcMain.handle('import-style-file', async () => {
 // ============================================
 // Optional, redacted error reporting
 // ============================================
-const REPORT_ENDPOINT = 'https://inquirelab.ai/freesia/report';
+const REPORT_ENDPOINT = 'https://freesia.arash-ahmadi.com/report';
 
-// Send a single redacted report. Never includes transcribed text or the
-// API key — only diagnostics. No-op when reporting is disabled.
 async function sendErrorReport({ level, context, message, stack }) {
   if (!store.get('errorReporting')) return false;
   try {
@@ -828,63 +787,68 @@ async function sendErrorReport({ level, context, message, stack }) {
       installId: store.get('installId') || 'unknown',
       appVersion: app.getVersion(),
       platform: `${process.platform} ${process.arch}`,
-      osRelease: require('os').release(),
+      osRelease: os.release(),
+      engine: store.get('engine'),
       level: String(level || 'ERROR').slice(0, 16),
       context: String(context || '').slice(0, 120),
-      // Guard against an API key ever leaking into a message/stack
       message: redact(String(message || '')).slice(0, 2000),
       stack: redact(String(stack || '')).slice(0, 6000),
       ts: new Date().toISOString()
     };
     const res = await fetch(REPORT_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(8000)
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(8000)
     });
     return res.ok;
   } catch (e) {
-    // Reporting must never disrupt the app
     writeLog('WARN', 'errorReport', `Failed to send report: ${e.message}`);
     return false;
   }
 }
 
-// Strip anything resembling a Gemini API key from outgoing text
+// Strip anything resembling a key or token from outgoing and logged text
 function redact(s) {
-  return s.replace(/AIza[0-9A-Za-z_\-]{10,}/g, 'AIza…[redacted]');
+  return s.replace(/AIza[0-9A-Za-z_-]{10,}/g, 'AIza…[redacted]')
+    .replace(/fv_[0-9A-Za-z_-]{10,}/g, 'fv_…[redacted]')
+    .replace(/Bearer\s+[0-9A-Za-z._-]{10,}/gi, 'Bearer …[redacted]');
 }
 
 ipcMain.handle('send-error-report', (_, report) => sendErrorReport(report || {}));
 
-// App lifecycle
+// ============================================
+// Lifecycle
+// ============================================
 app.whenReady().then(() => {
+  // safeStorage (DPAPI) is only usable once the app is ready
+  secrets.migrate();
+  for (const name of ['gemini', 'cloud', 'localServer']) secrets.get(name);
   initLogger();
-  writeLog('INFO', 'app', 'Freesia starting up');
+  writeLog('INFO', 'app', `Freesia ${app.getVersion()} starting (engine: ${store.get('engine')})`);
+  keys = createKeyHelper({ dir: app.getPath('userData'), log: writeLog });
+  keys.warm();
   applyAppTheme(store.get('theme'));
   createMainWindow();
   createOverlayWindow();
   createTray();
   registerShortcuts();
   setupAutoUpdater();
-
-  if (store.get('autoLaunch')) {
-    app.setLoginItemSettings({ openAtLogin: true });
+  if (store.get('autoLaunch')) app.setLoginItemSettings({ openAtLogin: true });
+  // Load the on-device model early so the first dictation is instant
+  if (store.get('engine') === 'local' && local.status().configured) {
+    setTimeout(() => local.start().catch((e) => writeLog('WARN', 'local', `Warm start failed: ${e.message}`)), 2500);
   }
+  if (gemini.status().configured) gemini.refreshModels().catch(() => {});
 });
 
-nativeTheme.on('updated', broadcastThemeState);
+nativeTheme.on('updated', () => sendToMain('theme-updated', getThemeState()));
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  local.stop();
+  keys?.dispose();
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    // Don't quit, stay in tray
-  }
-});
+app.on('window-all-closed', () => { /* stay in the tray */ });
+app.on('activate', () => { if (mainWindow === null) createMainWindow(); });
 
-app.on('activate', () => {
-  if (mainWindow === null) createMainWindow();
-});
+// Exposed for the end-to-end test harness (test/e2e.cjs)
+module.exports = { captureSelection, injectText, handleShortcut, engines };

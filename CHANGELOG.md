@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.0
+
+Freesia no longer needs a paid API. Three speech engines are available and Freesia falls back between them automatically. Freesia Cloud sends audio to a Freesia Voice server you have an account on, running Qwen3-ASR 1.7B. On this PC downloads a verified llama.cpp Vulkan runtime and Qwen3-ASR weights and transcribes locally on your graphics card or CPU. Google Gemini keeps working with your own key. Your dictionary is now sent to the speech model as vocabulary hints, and a corrector fixes dictionary terms that come out split up or spelled letter by letter. You can teach it corrections from History.
+
+The interface was rebuilt from scratch: a sidebar layout, a voice reactive bloom that replaces the waveform, a new floating pill, word by word transcript reveal, view transitions, an activity chart for the last thirty days, searchable history grouped by day, a new style editor, an Engines page, a shortcut recorder and a new onboarding flow. Everything follows the light and dark themes.
+
+Secrets moved out of plain text. The Gemini key and the cloud token are encrypted with your Windows account and never reach the interface process, and the Gemini key is sent in a header instead of the URL.
+
+Fixed: the Sounds switch did nothing. Command mode never read the selected text, so it could not edit anything; it now copies the selection first and waits for you to release the shortcut keys. Retrying a saved recording pasted into whatever window had focus; it now copies to the clipboard. A fixed 25 second deadline made long recordings fail; deadlines now scale with length. Gemini credit and quota errors stopped being retried against other models. Dictionary words with an apostrophe could not be removed. Images and rich text on the clipboard were lost after dictation. Every paste started a new PowerShell and compiled C#; a single helper now stays running.
+
 ## 2.4.0
 
 The microphone display now adjusts to quiet and loud input. Both the Home waveform and shortcut overlay use the same normalized level, and the overlay stays responsive while the app is hidden in the tray.

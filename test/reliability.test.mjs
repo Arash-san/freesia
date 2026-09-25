@@ -2,112 +2,135 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { boot } from './helpers.mjs';
 
-test('API deadline aborts stalled requests instead of waiting indefinitely', async () => {
-  const { window, dom } = await boot();
-  window.fetch = (_, { signal }) => new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))));
-  await assert.rejects(window.__freesiaTest.fetchJsonWithTimeout('https://example.test', {}, 15), /timed out/);
+const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+async function clickDialog(document, label) {
+  // Skip dialogs that are still playing their exit animation
+  const live = () => document.querySelector('.dialog-backdrop:not(.closing) .dialog');
+  for (let i = 0; i < 20 && !live(); i++) await settle(10);
+  const btn = [...live().querySelectorAll('.btn')].find((b) => b.textContent === label);
+  assert.ok(btn, `dialog button "${label}" missing`);
+  btn.click();
+}
+
+test('dictation pipeline: transcribe, format, inject, record history', async () => {
+  const { t, dom, calls, window } = await boot();
+  await t.processAudio(new window.Blob(['x'], { type: 'audio/webm' }), 'dictate-inject', { durationSec: 3 });
+  assert.equal(calls.transcribe[0].engine, 'cloud');
+  assert.equal(calls.format[0].engine, 'cloud');
+  assert.deepEqual(calls.inject, ['Hello, world.']);
+  assert.equal(t.getSettings().history[0].text, 'Hello, world.');
+  assert.equal(t.getSettings().history[0].engine, 'cloud');
   dom.window.close();
 });
-test('text extraction skips thinking parts and joins all output parts', async () => {
-  const { window, dom } = await boot();
-  assert.equal(window.__freesiaTest.responseText({ candidates: [{ content: { parts: [
-    { text: 'private reasoning', thought: true }, { text: 'Hello ' }, { text: 'world' }
-  ] } }] }), 'Hello world'); dom.window.close();
+
+test('a failing engine falls back to the next configured one', async () => {
+  const { t, dom, calls, window } = await boot({ engine: 'cloud' }, {
+    engineStatus: async () => ({ engine: 'cloud', formatter: 'off', cloud: { configured: true }, local: { configured: true, models: {} }, gemini: { configured: false } }),
+    transcribe: async (p) => { calls.transcribe.push(p.engine); return p.engine === 'cloud' ? { error: { code: 'network', message: 'offline' } } : { text: 'from local', engine: 'local' }; }
+  });
+  window.FreesiaAudio.toWav16k = async () => ({ wav: new ArrayBuffer(8), durationSec: 1 });
+  const calls2 = calls;
+  await t.processAudio(new window.Blob(['x']), 'test', { durationSec: 1 });
+  assert.deepEqual(calls2.transcribe, ['cloud', 'local']);
+  assert.equal(window.document.getElementById('testOutput').textContent.trim(), 'from local');
+  dom.window.close();
 });
-test('formatting uses the successful fallback model; errors preserve the transcript', async () => {
-  const { window, dom } = await boot(); let url;
-  window.fetch = async u => { url = u; return { ok: false, status: 503, json: async () => ({}) }; };
-  const text = await window.__freesiaTest.formatWithAI('Keep these words', 'dictate', 'gemini-3.5-flash-lite');
-  assert.match(url, /gemini-3.5-flash-lite/); assert.equal(text, 'Keep these words'); dom.window.close();
+
+test('when every engine fails the recording is kept and the error is shown', async () => {
+  let saved = null;
+  const { t, dom, window } = await boot({}, {
+    transcribe: async () => ({ error: { code: 'server', message: 'The speech model failed.' } }),
+    saveFailedAudio: async (audio, meta) => { saved = meta; return 'recording-1-x'; }
+  });
+  await t.processAudio(new window.Blob(['x']), 'dictate-inject', { durationSec: 5 });
+  assert.match(saved.error, /speech model failed/);
+  assert.match(window.document.getElementById('testOutput').textContent, /saved in History/);
+  dom.window.close();
 });
-test('unplugged microphone falls back, but denied permission does not retry another device', async () => {
-  const { window, dom } = await boot({ microphoneId: 'usb' }); let calls = 0;
-  const stream = {};
-  window.navigator.mediaDevices.getUserMedia = async constraints => {
-    calls++; if (calls === 1) throw Object.assign(new Error('missing'), { name: 'NotFoundError' });
-    assert.equal(constraints.audio, true); return stream;
-  };
-  assert.equal(await window.__freesiaTest.openMicrophoneStream(), stream); assert.equal(calls, 2);
-  window.__freesiaTest.setSettings({ microphoneId: 'usb' }); calls = 0;
+
+test('retried recordings go to the clipboard, never pasted into a random app', async () => {
+  const { t, dom, calls, window } = await boot();
+  await t.processAudio(new window.Blob(['x']), 'retry', { existingBase: 'recording-1-x', durationSec: 2 });
+  assert.equal(calls.inject.length, 0);
+  assert.deepEqual(calls.copy, ['Hello, world.']);
+  dom.window.close();
+});
+
+test('formatting failure never loses the transcript', async () => {
+  const { t, dom, calls, window } = await boot({}, { format: async () => ({ error: { code: 'timeout', message: 'slow' } }) });
+  await t.processAudio(new window.Blob(['x']), 'dictate-inject', { durationSec: 2 });
+  assert.deepEqual(calls.inject, ['hello world']);
+  dom.window.close();
+});
+
+test('Gemini gets a translation instruction for the Native Language style', async () => {
+  const { t, dom } = await boot({ activeStyle: 'native', nativeLanguage: 'fa' });
+  assert.match(t.geminiInstruction(t.getAllStyles().find((s) => s.id === 'native')), /Persian.*translate it into fluent, natural English/s);
+  assert.equal(t.spokenLanguage(t.getAllStyles().find((s) => s.id === 'native')), 'fa');
+  dom.window.close();
+});
+
+test('unplugged microphone falls back; denied permission does not retry', async () => {
+  const { t, dom, window } = await boot({ microphoneId: 'usb' });
+  let calls = 0;
+  const stream = { getTracks: () => [] };
+  window.navigator.mediaDevices.getUserMedia = async ({ audio }) => { calls++; if (audio.deviceId) throw Object.assign(new Error('gone'), { name: 'NotFoundError' }); return stream; };
+  assert.equal(await t.openMicrophoneStream(), stream);
+  assert.equal(calls, 2);
+  t.setSettings({ microphoneId: 'usb' }); calls = 0;
   window.navigator.mediaDevices.getUserMedia = async () => { calls++; throw Object.assign(new Error('denied'), { name: 'NotAllowedError' }); };
-  await assert.rejects(window.__freesiaTest.openMicrophoneStream(), /denied/); assert.equal(calls, 1); dom.window.close();
-});
-test('Home update action reflects status and asks for confirmation before installation', async () => {
-  const { window, document, dom } = await boot(); let installs = 0;
-  window.freesia.installUpdate = async () => { installs++; };
-  window.__freesiaTest.renderUpdateStatus({ status: 'downloaded', updateInfo: { version: '2.4.0' } });
-  assert.equal(document.getElementById('btnHomeUpdate').textContent, 'Restart to update');
-  window.confirm = () => false; await window.__freesiaTest.installUpdate(); assert.equal(installs, 0);
-  window.confirm = () => true; await window.__freesiaTest.installUpdate(); assert.equal(installs, 1);
-  window.__freesiaTest.renderUpdateStatus({ status: 'downloading', progress: { percent: 42 } });
-  assert.equal(document.getElementById('btnHomeUpdate').disabled, true);
-  assert.match(document.getElementById('btnHomeUpdate').textContent, /42/); dom.window.close();
-});
-test('diagnostic choice is visible in onboarding and stays synchronized with Settings', async () => {
-  const { window, document, dom } = await boot({ errorReporting: true });
-  const toggle = document.getElementById('onboardingErrorReporting');
-  assert.equal(toggle.checked, true); toggle.checked = false;
-  toggle.dispatchEvent(new window.Event('change'));
-  assert.equal(document.getElementById('toggleErrorReporting').checked, false); dom.window.close();
-  const existing = await boot({ errorReporting: false });
-  assert.equal(existing.document.getElementById('onboardingErrorReporting').checked, false); existing.dom.window.close();
-});
-
-test('stopping during microphone permission releases the late stream without starting audio', async () => {
-  const { window, dom } = await boot(); let resolve, stopped = 0;
-  window.HTMLCanvasElement.prototype.getContext = () => ({ clearRect() {} });
-  window.navigator.mediaDevices.getUserMedia = () => new Promise(r => resolve = r);
-  const starting = window.__freesiaTest.startRecording();
-  window.__freesiaTest.stopRecording(true);
-  resolve({ getTracks: () => [{ stop: () => stopped++ }] });
-  await starting; assert.equal(stopped, 1); dom.window.close();
-});
-
-test('recorder construction failure releases the microphone and audio context', async () => {
-  const { window, dom } = await boot(); let stopped = 0, closed = 0, failed = 0;
-  window.HTMLCanvasElement.prototype.getContext = () => ({ clearRect() {} });
-  const track = { stop: () => stopped++ };
-  window.navigator.mediaDevices.getUserMedia = async () => ({ getTracks: () => [track] });
-  window.AudioContext = class {
-    createMediaStreamSource() { return { connect() {} }; }
-    createAnalyser() { return { frequencyBinCount: 1024, getFloatTimeDomainData(a) { a.fill(0); } }; }
-    async resume() {} async close() { closed++; }
-  };
-  window.MediaRecorder = class { constructor() { throw new Error('recorder unavailable'); } };
-  window.freesia.recordingFailed = () => failed++;
-  await window.__freesiaTest.startRecording();
-  assert.equal(stopped, 1); assert.equal(closed, 1); assert.equal(failed, 1); dom.window.close();
-});
-
-test('overloaded transcription falls back once and formatting reuses the working model', async () => {
-  const { window, dom } = await boot(); let saves = [], urls = [], deleted = [];
-  window.__freesiaTest.setSettings({apiKey:'test',geminiModel:'gemini-3.7-flash',dictionary:[],history:[],snippets:[]});
-  window.freesia.saveFailedAudio = async (...args) => { saves.push(args); return 'recording-test'; };
-  window.freesia.deleteFailedRecording = async base => deleted.push(base);
-  window.freesia.overlayDone = () => {}; window.freesia.overlayError = () => {};
-  window.fetch = async (url, options) => {
-    urls.push(url); const first = urls.length === 1;
-    return { ok: !first, status: first ? 503 : 200, json: async () => first
-      ? { error: { message: 'High demand' } }
-      : { candidates: [{ content: { parts: [{ text: 'Hello world' }] } }] } };
-  };
-  await window.__freesiaTest.processAudio({ arrayBuffer: async () => new Uint8Array([1,2,3]).buffer }, 'dictate');
-  assert.equal(urls.length, 3);
-  assert.equal(urls[1], urls[2], 'formatting reuses successful fallback');
-  assert.equal(saves.length, 1); assert.deepEqual(deleted, ['recording-test']);
-  assert.ok(!window.__freesiaTest.buildTranscribeModels('gemini-3.7-flash').includes('gemini-3.7-flash'), 'unhealthy primary cools down');
+  await assert.rejects(t.openMicrophoneStream(), /denied/);
+  assert.equal(calls, 1);
   dom.window.close();
 });
 
-test('quota failure preserves the existing recording and updates metadata without duplicating audio', async () => {
-  const { window, dom } = await boot(); let saves = [], deleted = [], calls = 0;
-  window.freesia.saveFailedAudio = async (...args) => { saves.push(args); return 'recording-original'; };
-  window.freesia.deleteFailedRecording = async base => deleted.push(base);
-  window.freesia.overlayError = () => {};
-  window.fetch = async () => { calls++; return { ok:false,status:429,json:async()=>({error:{message:'Quota exceeded'}}) }; };
-  await window.__freesiaTest.processAudio({ arrayBuffer: async () => new Uint8Array([1]).buffer }, 'dictate', 'recording-original');
-  assert.equal(calls, 1); assert.equal(deleted.length, 0);
-  assert.equal(saves.length, 2);
-  for (const [audio,,base] of saves) { assert.equal(audio, null); assert.equal(base, 'recording-original'); }
-  assert.match(saves[1][1].error, /Quota exceeded/); dom.window.close();
+test('update button reflects state and install asks first in a dialog', async () => {
+  let installs = 0;
+  const { t, dom, document } = await boot({}, { installUpdate: async () => { installs++; return null; } });
+  t.renderUpdateStatus({ status: 'downloaded', updateInfo: { version: '3.1.0' } });
+  assert.equal(document.getElementById('btnHomeUpdate').textContent, 'Restart to update');
+  const first = t.installUpdate();
+  await clickDialog(document, 'Cancel');
+  await first;
+  assert.equal(installs, 0);
+  const second = t.installUpdate();
+  await clickDialog(document, 'Restart and update');
+  await second;
+  assert.equal(installs, 1);
+  t.renderUpdateStatus({ status: 'downloading', progress: { percent: 42 } });
+  assert.equal(document.getElementById('btnHomeUpdate').disabled, true);
+  assert.match(document.getElementById('btnHomeUpdate').textContent, /42/);
+  dom.window.close();
+});
+
+test('onboarding and settings share the error-report choice', async () => {
+  const { dom, document, window } = await boot({ onboarded: false, errorReporting: true });
+  const toggle = document.getElementById('onboardingErrorReporting');
+  assert.equal(toggle.checked, true);
+  toggle.checked = false;
+  toggle.dispatchEvent(new window.Event('change'));
+  assert.equal(document.getElementById('toggleErrorReporting').checked, false);
+  dom.window.close();
+});
+
+test('a dictionary word with an apostrophe can be removed (2.x could not)', async () => {
+  const { dom, document } = await boot({ dictionary: ["O'Brien", 'GRPO'] });
+  const chip = [...document.querySelectorAll('#dictionaryList .chip')].find((c) => c.textContent.includes("O'Brien"));
+  chip.querySelector('.x').click();
+  await settle();
+  assert.ok(![...document.querySelectorAll('#dictionaryList .chip')].some((c) => c.textContent.includes("O'Brien")));
+  dom.window.close();
+});
+
+test('stopping during microphone permission releases the late stream', async () => {
+  const { t, dom, window } = await boot();
+  let release;
+  let stopped = 0;
+  window.navigator.mediaDevices.getUserMedia = () => new Promise((r) => { release = r; });
+  const starting = t.startRecording('test');
+  t.stopRecording(true);
+  release({ getTracks: () => [{ stop: () => stopped++ }], getAudioTracks: () => [] });
+  await starting;
+  assert.equal(stopped, 1);
+  dom.window.close();
 });

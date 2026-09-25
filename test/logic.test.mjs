@@ -2,149 +2,132 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { boot } from './helpers.mjs';
 
-test('Gemini 3.5 Flash-Lite is the runtime default', async () => {
-  const { window } = await boot();
-  assert.equal(window.__freesiaTest.DEFAULT_GEMINI_MODEL, 'gemini-3.5-flash-lite');
-});
-
-test('microphone selection builds exact device constraints and supports system default', async () => {
-  const { window } = await boot();
-  const build = window.__freesiaTest.buildAudioConstraints;
-  assert.equal(build(''), true);
-  assert.equal(build('usb-mic-123').deviceId.exact, 'usb-mic-123');
-});
-
-test('settings expose a persisted microphone device list', async () => {
-  const { document } = await boot();
-  const select = document.getElementById('selectMicrophone');
-  assert.ok(select);
-  assert.equal(select.options[0].textContent, 'System default');
-});
-
-test('normalizeStats seeds a fresh profile with zeroed today/lifetime/streak', async () => {
-  const { window } = await boot();
-  const s = window.__freesiaTest.normalizeStats(null);
+test('normalizeStats seeds a fresh profile', async () => {
+  const { t, dom } = await boot();
+  const s = t.normalizeStats(null);
   assert.equal(s.today.words, 0);
-  assert.equal(s.lifetime.words, 0);
+  assert.equal(s.lifetime.sessions, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(s.days)), {});
+  assert.equal(s.today.date, t.localDateString());
+  dom.window.close();
+});
+
+test('normalizeStats migrates the legacy flat shape', async () => {
+  const { t, dom } = await boot();
+  const today = t.localDateString();
+  const s = t.normalizeStats({ wordsToday: 40, sessions: 3, timeSaved: 5, lastDate: today });
+  assert.equal(s.today.words, 40);
+  assert.equal(s.lifetime.words, 40);
+  assert.equal(s.lifetime.savedSec, 300);
+  assert.equal(s.days[today], 40);
+  dom.window.close();
+});
+
+test('a streak resets when a day was skipped', async () => {
+  const { t, dom } = await boot();
+  const s = t.normalizeStats({ today: { date: '2000-01-01', words: 5 }, lifetime: { words: 5, sessions: 1, recordSec: 0, savedSec: 0 }, streak: { current: 9, best: 9, lastDate: '2000-01-01' } });
   assert.equal(s.streak.current, 0);
-  assert.equal(s.today.date, window.__freesiaTest.localDateString());
+  assert.equal(s.streak.best, 9);
+  assert.equal(s.today.words, 0);
+  dom.window.close();
 });
 
-test('normalizeStats migrates the legacy flat shape and seeds lifetime', async () => {
-  const { window } = await boot();
-  const today = window.__freesiaTest.localDateString();
-  const s = window.__freesiaTest.normalizeStats({ wordsToday: 40, sessions: 3, timeSaved: 5, lastDate: today });
-  assert.equal(s.lifetime.words, 40, 'lifetime words seeded from legacy counters');
-  assert.equal(s.lifetime.sessions, 3);
-  assert.equal(s.lifetime.savedSec, 300, '5 minutes -> 300 seconds');
-  assert.equal(s.today.words, 40, 'today preserved because lastDate is today');
+test('formatDuration never loses short dictations', async () => {
+  const { t, dom } = await boot();
+  assert.equal(t.formatDuration(22), '22s');
+  assert.equal(t.formatDuration(90), '2m');
+  assert.equal(t.formatDuration(3720), '1h 2m');
+  dom.window.close();
 });
 
-test('normalizeStats resets today but keeps lifetime when the day rolls over', async () => {
-  const { window } = await boot();
-  const s = window.__freesiaTest.normalizeStats({ wordsToday: 40, sessions: 3, timeSaved: 5, lastDate: '2000-01-01' });
-  assert.equal(s.today.words, 0, 'stale day resets today');
-  assert.equal(s.lifetime.words, 40, 'lifetime still seeded');
+test('snippet rules warn against over-expansion and vanish when empty', async () => {
+  const { t, dom } = await boot({ snippets: [{ trigger: 'thank you', expansion: 'Best regards' }] });
+  assert.match(t.buildSnippetInstructions(), /When in doubt, do not expand/);
+  t.setSettings({ snippets: [] });
+  assert.equal(t.buildSnippetInstructions(), '');
+  dom.window.close();
 });
 
-test('formatDuration is human and never loses short dictations', async () => {
-  const { window } = await boot();
-  const f = window.__freesiaTest.formatDuration;
-  assert.equal(f(0), '0s');
-  assert.equal(f(45), '45s');
-  assert.equal(f(600), '10m');
-  assert.equal(f(3600), '1h 0m');
-  assert.equal(f(3660), '1h 1m');
+test('fallback snippet expansion only fires on whole words', async () => {
+  const { t, dom } = await boot();
+  t.setSettings({ snippets: [{ trigger: 'regards', expansion: 'REGARDS' }] });
+  assert.equal(t.expandSnippets('disregards this'), 'disregards this');
+  assert.equal(t.expandSnippets('kind regards'), 'kind REGARDS');
+  dom.window.close();
 });
 
-test('buildSnippetInstructions tells the model not to over-expand casual phrases', async () => {
-  const { window } = await boot();
-  window.__freesiaTest.setSettings({
-    snippets: [{ trigger: 'best regards', expansion: 'Best regards, Arash' }]
-  });
-  const text = window.__freesiaTest.buildSnippetInstructions();
-  assert.match(text, /best regards/);
-  assert.match(text, /do NOT expand/i);
-  assert.match(text, /deliberately/i);
-});
-
-test('empty snippet list produces no instructions', async () => {
-  const { window } = await boot();
-  window.__freesiaTest.setSettings({ snippets: [] });
-  assert.equal(window.__freesiaTest.buildSnippetInstructions(), '');
-});
-
-test('fallback expandSnippets only fires on whole-word triggers', async () => {
-  const { window } = await boot();
-  window.__freesiaTest.setSettings({ snippets: [{ trigger: 'regards', expansion: 'REGARDS' }] });
-  const expand = window.__freesiaTest.expandSnippets;
-  assert.equal(expand('kind regards to you'), 'kind REGARDS to you', 'whole word expands');
-  assert.equal(expand('disregarding that'), 'disregarding that', 'substring inside a word must not expand');
-});
-
-test('processing tools only inject instructions when enabled', async () => {
-  const { window } = await boot();
-  const t = window.__freesiaTest;
+test('processing tools add instructions only when enabled', async () => {
+  const { t, dom } = await boot();
   t.setSettings({});
   assert.equal(t.anyToolEnabled(), false);
   assert.equal(t.buildToolInstructions(), '');
-
-  t.setSettings({ toolTrimSpelling: true });
-  assert.equal(t.anyToolEnabled(), true);
-  assert.match(t.buildToolInstructions(), /SPELLING CLEANUP/);
-  assert.doesNotMatch(t.buildToolInstructions(), /SPOKEN EMOJI/);
-
-  t.setSettings({ toolSpokenEmoji: true, toolPolish: true });
-  const both = t.buildToolInstructions();
-  assert.match(both, /SPOKEN EMOJI/);
-  assert.match(both, /POLISH & REPHRASE/);
+  t.setSettings({ toolSpokenEmoji: true });
+  assert.match(t.buildToolInstructions(), /SPOKEN EMOJI/);
+  dom.window.close();
 });
 
-test('transcription uses stable models discovered for the user, not legacy forced fallbacks', async () => {
-  const { window } = await boot();
-  const t = window.__freesiaTest;
-  const discovered = [
-    { id: 'gemini-3.7-flash' },
-    { id: 'gemini-3.6-flash' },
-    { id: 'gemini-3.5-flash-lite' },
-    { id: 'gemini-3.1-pro-preview' }
-  ];
-  const list = t.buildTranscribeModels('gemini-3.7-flash', discovered);
-  assert.deepEqual(Array.from(list), ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite']);
-  assert.ok(!list.some(m => m.startsWith('gemini-2.')), 'does not inject inaccessible 2.x models');
-  assert.ok(!list.some(m => m.includes('preview')), 'does not use preview models as fallbacks');
+test('command mode gives the formatter the selected text (2.x never did)', async () => {
+  const { t, dom } = await boot();
+  const withSel = t.buildFormatPrompt('make it friendlier', 'command', { selection: 'Send the report now.' });
+  assert.match(withSel, /Send the report now\./);
+  assert.match(withSel, /make it friendlier/);
+  const noSel = t.buildFormatPrompt('write a thank you note', 'command', { selection: '' });
+  assert.match(noSel, /write a thank you note/);
+  assert.doesNotMatch(noSel, /Selected text/);
+  dom.window.close();
 });
 
-test('transcription has current stable emergency fallbacks when discovery is unavailable', async () => {
-  const { window } = await boot();
-  const t = window.__freesiaTest;
-  const list = t.buildTranscribeModels('gemini-3.7-flash', []);
-  assert.equal(list[0], 'gemini-3.7-flash');
-  assert.equal(new Set(list).size, list.length, 'no duplicate models');
-  assert.ok(list.length <= 4, 'retry count stays bounded');
-  for (const m of t.TRANSCRIBE_FALLBACK_MODELS) assert.ok(list.includes(m));
-  assert.ok(!list.some(m => m.startsWith('gemini-2.')), 'emergency list has no legacy 2.x model');
+test('dictionary words reach the formatter prompt and the speech model', async () => {
+  const { t, dom, calls, window } = await boot({ dictionary: ['Qwen3-ASR', "O'Brien"] });
+  assert.match(t.buildFormatPrompt('hi', 'dictate-inject'), /Qwen3-ASR, O'Brien/);
+  await t.processAudio(new window.Blob(['x'], { type: 'audio/webm' }), 'test', { durationSec: 2 });
+  assert.equal(calls.transcribe[0].prompt, "Qwen3-ASR, O'Brien");
+  dom.window.close();
 });
 
-test('failed transcription labels fallback errors without implying the user selected them', async () => {
-  const { window } = await boot();
-  const summarize = window.__freesiaTest.summarizeTranscriptionFailure;
-  const summary = summarize(
-    new Error('Model unavailable [model=gemini-3.6-flash, http=404]'),
-    'gemini-3.7-flash',
-    ['gemini-3.7-flash', 'gemini-3.6-flash']
-  );
-  assert.match(summary, /Selected model gemini-3\.7-flash/);
-  assert.match(summary, /1 fallback model failed/);
-  assert.match(summary, /Last fallback error.*gemini-3\.6-flash/);
+test('formatter wrapping quotes and labels are removed', async () => {
+  const { t, dom } = await boot();
+  assert.equal(t.stripWrapping('"Hello there."', 'hello there'), 'Hello there.');
+  assert.equal(t.stripWrapping('Formatted text: Hi.', 'hi'), 'Hi.');
+  assert.equal(t.stripWrapping('"Quoted" she said.', '"quoted" she said'), '"Quoted" she said.');
+  dom.window.close();
+});
+
+test('engine order: primary first, then configured fallbacks only', async () => {
+  const { t, dom } = await boot();
+  const state = { engine: 'gemini', cloud: { configured: true }, local: { configured: true }, gemini: { configured: false } };
+  const order = (...a) => JSON.parse(JSON.stringify(t.engineOrder(...a)));
+  assert.deepEqual(order(state, true), ['gemini', 'cloud', 'local']);
+  assert.deepEqual(order(state, false), ['gemini']);
+  assert.deepEqual(order({ ...state, engine: 'local' }, true), ['local', 'cloud']);
+  dom.window.close();
+});
+
+test('formatter choice respects availability', async () => {
+  const { t, dom } = await boot();
+  const s = (formatter, cloud, gemini) => t.pickFormatter({ formatter, cloud: { configured: cloud }, gemini: { configured: gemini } });
+  assert.equal(s('auto', true, true), 'cloud');
+  assert.equal(s('auto', false, true), 'gemini');
+  assert.equal(s('auto', false, false), null);
+  assert.equal(s('gemini', true, false), null);
+  assert.equal(s('off', true, true), null);
+  dom.window.close();
 });
 
 test('custom styles merge with the built-ins', async () => {
-  const { window } = await boot();
-  const t = window.__freesiaTest;
-  const builtinCount = t.getAllStyles().length;
-  t.setSettings({ customStyles: [{ id: 'custom-x', name: 'My Style', icon: '🌸', color: '#8B5CF6', prompt: 'do the thing', custom: true }] });
+  const { t, dom } = await boot();
+  t.setSettings({ customStyles: [{ id: 'custom-x', name: 'X', prompt: 'p', custom: true }] });
   const all = t.getAllStyles();
-  assert.equal(all.length, builtinCount + 1);
-  assert.ok(all.find(s => s.id === 'custom-x'));
+  assert.ok(all.some((s) => s.id === 'normal'));
+  assert.ok(all.some((s) => s.id === 'custom-x'));
+  dom.window.close();
+});
+
+test('shortcut recorder maps physical keys to Electron accelerators', async () => {
+  const { t, dom } = await boot();
+  assert.equal(t.keyFromEvent({ code: 'KeyD' }), 'D');
+  assert.equal(t.keyFromEvent({ code: 'Space' }), 'Space');
+  assert.equal(t.keyFromEvent({ code: 'F9' }), 'F9');
+  assert.equal(t.keyFromEvent({ code: 'ShiftLeft' }), null);
+  dom.window.close();
 });

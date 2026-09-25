@@ -1,7 +1,7 @@
 {
   "name": "freesia",
-  "version": "2.4.0",
-  "description": "Freesia - free, open-source AI voice dictation for Windows. Speak freely. Write beautifully.",
+  "version": "3.0.0",
+  "description": "Freesia - free, open-source voice dictation for Windows. Self-hosted, on-device or Gemini speech recognition. Speak freely. Write beautifully.",
   "main": "src/main/main.js",
   "license": "MIT",
   "author": "Freesia Contributors",
@@ -20,13 +20,12 @@
     "test:native": "node test/run-native.cjs",
     "build": "electron-builder",
     "package": "electron-builder --win --x64",
-    "release": "electron-builder --win --x64 --publish always"
+    "release": "electron-builder --win --x64 --publish always",
+    "shots": "node test/run-shots.cjs"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.21.0",
     "electron-store": "^8.2.0",
-    "electron-updater": "^6.8.3",
-    "node-key-sender": "^1.0.11"
+    "electron-updater": "^6.8.3"
   },
   "devDependencies": {
     "electron": "^33.2.0",

@@ -5,7 +5,7 @@ that a Freesia user asks to "make me a dictation style." Follow it to produce a
 style file that Freesia imports automatically. No build step, no code changes.
 
 **Freesia** is a Windows voice‑dictation app. A *style* is a named instruction set
-that tells Gemini how to format the user's speech (tone, punctuation, length, what
+that tells Freesia's formatting model (the Freesia Cloud formatter or Gemini) how to format the user's speech (tone, punctuation, length, what
 to keep or drop). Users pick the active style on the Home screen.
 
 ## What you produce
@@ -46,7 +46,7 @@ A style file is JSON. It may be **one** of:
 | Field         | Required | Notes |
 |---------------|----------|-------|
 | `name`        | ✅ yes   | ≤ 40 chars. Shown on the style chip. |
-| `prompt`      | ✅ yes   | The instructions sent to Gemini. Be specific and imperative. ≤ 4000 chars. |
+| `prompt`      | ✅ yes   | The instructions sent to the formatting model. Be specific and imperative. ≤ 4000 chars. |
 | `icon`        | no       | A single emoji. Defaults to `✨`. |
 | `color`       | no       | Hex accent, e.g. `#8B5CF6`. Defaults to violet. |
 | `description` | no       | ≤ 120 chars. One line about when to use it. |

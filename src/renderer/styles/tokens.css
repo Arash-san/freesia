@@ -1,0 +1,106 @@
+/* ==========================================================
+   Freesia 3 — design tokens
+   Monochrome ink/paper chrome; colour lives only in the
+   iridescent "bloom" (orb, focus, progress, active states).
+   ========================================================== */
+
+@font-face { font-family: 'Geist'; src: url('../fonts/Geist-Variable.ttf') format('truetype'); font-weight: 100 900; font-display: block; }
+@font-face { font-family: 'Geist Mono'; src: url('../fonts/GeistMono-Variable.ttf') format('truetype'); font-weight: 100 900; font-display: block; }
+@font-face { font-family: 'Instrument Serif'; src: url('../fonts/InstrumentSerif-Regular.ttf') format('truetype'); font-style: normal; font-display: block; }
+@font-face { font-family: 'Instrument Serif'; src: url('../fonts/InstrumentSerif-Italic.ttf') format('truetype'); font-style: italic; font-display: block; }
+/* Persian, Arabic and Urdu transcripts render with Vazirmatn */
+@font-face { font-family: 'Vazirmatn'; src: url('../fonts/Vazirmatn-Variable.ttf') format('truetype'); font-weight: 100 900; unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F; }
+
+:root {
+  --font-ui: 'Geist', 'Vazirmatn', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Instrument Serif', 'Vazirmatn', Georgia, serif;
+  --font-mono: 'Geist Mono', 'Cascadia Mono', Consolas, monospace;
+
+  /* The bloom: the only chromatic element in the interface */
+  --bloom-1: #7cc4ff;
+  --bloom-2: #b69cff;
+  --bloom-3: #ff9ec7;
+  --bloom-4: #ffd48a;
+  --bloom: linear-gradient(115deg, var(--bloom-1), var(--bloom-2) 38%, var(--bloom-3) 70%, var(--bloom-4));
+  --bloom-conic: conic-gradient(from 180deg, var(--bloom-1), var(--bloom-2), var(--bloom-3), var(--bloom-4), var(--bloom-1));
+  /* Starts and ends on the same hue so sliding it never shows a seam */
+  --bloom-loop: linear-gradient(90deg, var(--bloom-1), var(--bloom-2), var(--bloom-3), var(--bloom-4), var(--bloom-1));
+  /* The orb uses deeper hues than the UI accents so it reads as colour, not milk */
+  --orb-1: #4a9dff;
+  --orb-2: #8f6bff;
+  --orb-3: #ff5fa2;
+  --orb-4: #ffb347;
+
+  --ok: #5ee4a6;
+  --warn: #ffc56b;
+  --bad: #ff7a85;
+
+  --r-xs: 6px;
+  --r-sm: 9px;
+  --r-md: 13px;
+  --r-lg: 18px;
+  --r-xl: 26px;
+  --r-pill: 999px;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --t-fast: 140ms;
+  --t-med: 260ms;
+  --t-slow: 520ms;
+
+  --sidebar-w: 232px;
+  --titlebar-h: 40px;
+}
+
+/* ---------- Dark: graphite ink ---------- */
+:root, [data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0b0b0d;
+  --bg-2: #111114;
+  --sheet: #141417;
+  --raise: rgba(255, 255, 255, 0.035);
+  --raise-2: rgba(255, 255, 255, 0.06);
+  --raise-3: rgba(255, 255, 255, 0.09);
+  --line: rgba(255, 255, 255, 0.075);
+  --line-2: rgba(255, 255, 255, 0.13);
+  --ink: #ededf1;
+  --ink-2: #b4b4bf;
+  --ink-3: #7c7c89;
+  --ink-4: #55555f;
+  --btn: #f2f2f5;
+  --btn-ink: #0b0b0d;
+  --shadow-1: 0 1px 0 rgba(255,255,255,0.04) inset, 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-2: 0 1px 0 rgba(255,255,255,0.05) inset, 0 12px 32px -12px rgba(0,0,0,0.7), 0 2px 6px rgba(0,0,0,0.35);
+  --shadow-3: 0 30px 80px -20px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.07);
+  --grain-opacity: 0.05;
+  --glow: 0.55;
+}
+
+/* ---------- Light: warm paper ---------- */
+[data-theme='light'] {
+  color-scheme: light;
+  --bg: #efeeea;
+  --bg-2: #e8e7e2;
+  --sheet: #fbfbf9;
+  --raise: rgba(20, 20, 30, 0.028);
+  --raise-2: rgba(20, 20, 30, 0.05);
+  --raise-3: rgba(20, 20, 30, 0.08);
+  --line: rgba(20, 20, 30, 0.08);
+  --line-2: rgba(20, 20, 30, 0.14);
+  --ink: #16161b;
+  --ink-2: #4a4a55;
+  --ink-3: #7d7d88;
+  --ink-4: #a6a6af;
+  --btn: #16161b;
+  --btn-ink: #fbfbf9;
+  --shadow-1: 0 1px 0 rgba(255,255,255,0.8) inset, 0 1px 2px rgba(20,20,30,0.06);
+  --shadow-2: 0 1px 0 rgba(255,255,255,0.9) inset, 0 14px 34px -14px rgba(20,20,30,0.22), 0 2px 6px rgba(20,20,30,0.06);
+  --shadow-3: 0 30px 80px -24px rgba(20,20,30,0.35), 0 0 0 1px rgba(20,20,30,0.08);
+  --grain-opacity: 0.035;
+  --glow: 0.35;
+  --bloom-1: #3d9bff;
+  --bloom-2: #8b6cff;
+  --bloom-3: #f25fa0;
+  --bloom-4: #f4a63a;
+}

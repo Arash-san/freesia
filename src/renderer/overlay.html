@@ -2,213 +2,107 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Freesia Overlay</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self'">
+  <title>Freesia overlay</title>
+  <link rel="stylesheet" href="styles/tokens.css">
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    :root {
-      --overlay-bg: rgba(22, 16, 30, 0.90);
-      --overlay-border: rgba(255, 255, 255, 0.10);
-      --overlay-text: #A79FB8;
-      --violet: #A78BFA;
-      --pink: #F472B6;
-      --success: #34D399;
-      --error: #FB7185;
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font-family: var(--font-ui); -webkit-font-smoothing: antialiased; user-select: none; }
+    .stage { position: fixed; inset: 0; display: grid; place-items: center; }
+    .pill {
+      --w: 236px;
+      position: relative; width: var(--w); height: 54px; border-radius: 999px; display: flex; align-items: center; gap: 10px; padding: 0 16px 0 7px;
+      background: rgba(14, 14, 18, 0.9); color: #f2f2f5;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.09) inset, 0 18px 40px -12px rgba(0,0,0,0.7), 0 2px 8px rgba(0,0,0,0.4);
+      backdrop-filter: blur(18px) saturate(1.4);
+      opacity: 0; transform: translateY(14px) scale(0.86); filter: blur(4px);
+      transition: opacity 260ms cubic-bezier(.22,1,.36,1), transform 520ms cubic-bezier(.34,1.56,.64,1), filter 260ms, width 420ms cubic-bezier(.34,1.56,.64,1);
     }
-    @media (prefers-color-scheme: light) {
-      :root {
-        --overlay-bg: rgba(255, 255, 255, 0.92);
-        --overlay-border: rgba(42, 33, 53, 0.12);
-        --overlay-text: #6E6478;
-        --violet: #8B5CF6;
-        --pink: #EC4899;
-        --success: #10B981;
-        --error: #E11D48;
-      }
+    .pill.show { opacity: 1; transform: none; filter: none; }
+    .pill.wide { --w: 300px; }
+    /* Iridescent rim that only glows while listening */
+    .pill::before {
+      content: ''; position: absolute; inset: -1px; border-radius: inherit; padding: 1px; background: var(--bloom-conic);
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+      opacity: 0; transition: opacity 300ms; animation: rim 4s linear infinite;
     }
-    body {
-      background: transparent;
-      font-family: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, sans-serif;
-      overflow: hidden;
-      -webkit-app-region: drag;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-    }
-    .overlay {
-      min-width: 190px;
-      width: fit-content;
-      padding: 14px 22px;
-      border-radius: 999px;
-      background: var(--overlay-bg);
-      backdrop-filter: blur(24px);
-      -webkit-backdrop-filter: blur(24px);
-      border: 1px solid var(--overlay-border);
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
-      transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .overlay.listening {
-      border-color: rgba(167, 139, 250, 0.45);
-      box-shadow: 0 0 26px rgba(167, 139, 250, 0.30), 0 8px 32px rgba(0, 0, 0, 0.35);
-    }
-    .overlay.processing { border-color: rgba(244, 114, 182, 0.45); }
-    .overlay.done { border-color: rgba(52, 211, 153, 0.5); }
-    .overlay.error {
-      border-color: rgba(251, 113, 133, 0.5);
-      animation: shake 0.5s ease;
-    }
-
-    .indicator {
-      width: 26px; height: 26px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      position: relative;
-      flex-shrink: 0;
-    }
-    .dot {
-      width: 11px; height: 11px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, var(--violet), var(--pink));
-      transition: all 0.3s ease;
-    }
-    .overlay.listening .dot { animation: micPulse 1s ease-in-out infinite; }
-    .pulse-ring {
-      position: absolute;
-      inset: -3px;
-      border-radius: 50%;
-      border: 2px solid rgba(167, 139, 250, 0.5);
-      opacity: 0;
-    }
-    .overlay.listening .pulse-ring { animation: pulseRing 1.5s ease-out infinite; }
-    .overlay.listening .pulse-ring:nth-child(2) { animation-delay: 0.5s; }
-
-    .overlay.processing .indicator::after {
-      content: '';
-      position: absolute;
-      inset: -1px;
-      border-radius: 50%;
-      border: 2px solid transparent;
-      border-top-color: var(--pink);
-      animation: spinArc 0.8s linear infinite;
-    }
-    .overlay.done .dot { background: var(--success); }
-    .overlay.error .dot { background: var(--error); }
-
-    .status-text {
-      font-size: 12.5px;
-      font-weight: 650;
-      color: var(--overlay-text);
-      white-space: nowrap;
-      transition: color 0.3s ease;
-    }
-    .overlay.listening .status-text { color: var(--violet); }
-    .overlay.processing .status-text { color: var(--pink); }
-    .overlay.done .status-text { color: var(--success); }
-    .overlay.error .status-text { color: var(--error); }
-
-    .timer-text {
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--pink);
-      font-variant-numeric: tabular-nums;
-    }
-
-    .mini-wave {
-      display: flex;
-      align-items: center;
-      gap: 2.5px;
-      height: 20px;
-    }
-    .mini-wave .bar {
-      width: 3px;
-      height: 4px;
-      background: linear-gradient(180deg, var(--violet), var(--pink));
-      border-radius: 2px;
-      transition: height 0.1s ease;
-    }
-    @keyframes pulseRing {
-      0%   { transform: scale(1); opacity: 0.6; }
-      100% { transform: scale(2.1); opacity: 0; }
-    }
-    @keyframes micPulse {
-      0%, 100% { transform: scale(1); }
-      50%      { transform: scale(1.25); }
-    }
-    @keyframes spinArc {
-      to { transform: rotate(360deg); }
-    }
-    @keyframes shake {
-      0%, 100% { transform: translateX(0); }
-      20%, 60% { transform: translateX(-3px); }
-      40%, 80% { transform: translateX(3px); }
-    }
+    .pill.listening::before { opacity: calc(0.35 + var(--lvl, 0) * 0.65); }
+    @keyframes rim { to { filter: hue-rotate(360deg); } }
+    .orb { width: 42px; height: 42px; flex-shrink: 0; position: relative; }
+    .orb canvas { position: absolute; inset: -14px; width: 70px; height: 70px; }
+    .text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
+    .label { font-size: 13.5px; font-weight: 600; letter-spacing: -0.005em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sub { font-size: 11.5px; color: #9a9aa6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+    .timer { font: 560 13px var(--font-mono); color: #d8d8e0; font-variant-numeric: tabular-nums; }
+    .esc { font: 500 10px var(--font-mono); color: #8a8a96; border: 1px solid rgba(255,255,255,0.14); border-bottom-width: 2px; border-radius: 5px; padding: 2px 5px; margin-left: 4px; }
+    .right { display: flex; align-items: center; }
+    .processing .label { background: linear-gradient(90deg, #8a8a96, #fff 45%, #8a8a96 90%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.4s linear infinite; }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+    .check { width: 22px; height: 22px; }
+    .check path { stroke-dasharray: 24; stroke-dashoffset: 24; }
+    .done .check path { animation: draw 420ms 120ms cubic-bezier(.22,1,.36,1) forwards; }
+    @keyframes draw { to { stroke-dashoffset: 0; } }
+    .error { animation: shake 420ms cubic-bezier(.36,.07,.19,.97); }
+    .error .label { color: #ffb1b8; }
+    @keyframes shake { 10%, 90% { translate: -1px 0; } 20%, 80% { translate: 2px 0; } 30%, 50%, 70% { translate: -4px 0; } 40%, 60% { translate: 4px 0; } }
+    [hidden] { display: none !important; }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition-duration: 1ms !important; } }
   </style>
 </head>
 <body>
-  <div class="overlay listening" id="overlay">
-    <div class="indicator">
-      <div class="pulse-ring"></div>
-      <div class="pulse-ring"></div>
-      <div class="dot"></div>
-    </div>
-    <span class="status-text" id="statusText">Listening</span>
-    <span class="timer-text" id="timerText" style="display:none;"></span>
-    <div class="mini-wave">
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
+  <div class="stage">
+    <div class="pill" id="pill">
+      <div class="orb"><canvas id="orb"></canvas></div>
+      <div class="text"><span class="label" id="label">Listening</span><span class="sub" id="sub"></span></div>
+      <div class="right">
+        <span class="timer" id="timer">0:00</span><span class="esc" id="esc">Esc</span>
+        <svg class="check" id="check" viewBox="0 0 24 24" fill="none" stroke="#5ee4a6" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+      </div>
     </div>
   </div>
-
+  <script src="js/orb.js"></script>
   <script>
-    const overlay = document.getElementById('overlay');
-    const statusText = document.getElementById('statusText');
-    const timerText = document.getElementById('timerText');
-    const waveBars = [...document.querySelectorAll('.mini-wave .bar')];
-    const waveShape = [0.38, 0.62, 0.84, 1, 0.84, 0.62, 0.38];
-    const states = { idle: 'Ready', listening: 'Listening', processing: 'Processing', done: 'Done!', error: 'Error' };
+    const pill = document.getElementById('pill');
+    const label = document.getElementById('label');
+    const sub = document.getElementById('sub');
+    const timer = document.getElementById('timer');
+    const esc = document.getElementById('esc');
+    const check = document.getElementById('check');
+    const orb = window.createBloomOrb(document.getElementById('orb'), { scale: 0.3 });
+    let mode = 'dictate';
 
-    if (window.freesia) {
-      window.freesia.onOverlayState((state) => {
-        overlay.className = 'overlay ' + state;
-        statusText.textContent = states[state] || 'Ready';
-        waveBars.forEach(bar => { bar.style.height = '4px'; });
-        // Show timer only while listening
-        if (state === 'listening') {
-          timerText.style.display = '';
-          timerText.textContent = '0:00';
-        } else {
-          timerText.style.display = 'none';
-        }
-      });
-
-      if (window.freesia.onOverlayTimer) {
-        window.freesia.onOverlayTimer((timeStr) => {
-          if (timerText) {
-            timerText.textContent = timeStr;
-            timerText.style.display = '';
-          }
-        });
+    function render(msg) {
+      const { state } = msg;
+      if (state === 'hidden') { pill.classList.remove('show'); orb.setState('idle'); return; }
+      if (msg.mode) mode = msg.mode;
+      pill.className = `pill show ${state}`;
+      timer.hidden = esc.hidden = state !== 'listening';
+      check.hidden = state !== 'done';
+      orb.setState(state === 'listening' ? 'listening' : state === 'processing' ? 'processing' : state === 'done' ? 'done' : state === 'error' ? 'error' : 'idle');
+      if (state === 'listening') {
+        label.textContent = mode === 'command' ? 'Editing by voice' : 'Listening';
+        sub.textContent = msg.hint || (mode === 'command' ? 'Say how to change it' : 'Press again to finish');
+        timer.textContent = '0:00';
+      } else if (state === 'processing') {
+        label.textContent = msg.label === 'Formatting' ? 'Shaping your words' : 'Transcribing';
+        sub.textContent = msg.label && msg.label !== 'Formatting' ? msg.label : '';
+      } else if (state === 'done') {
+        label.textContent = 'Done';
+        sub.textContent = msg.label || '';
+      } else if (state === 'error') {
+        label.textContent = 'Couldn’t finish';
+        sub.textContent = msg.message || 'Your recording is saved';
+        pill.classList.add('wide');
       }
-
-      if (window.freesia.onOverlayAudioLevel) {
-        window.freesia.onOverlayAudioLevel((rawLevel) => {
-          const level = overlay.classList.contains('listening') ? Math.max(0, Math.min(1, Number(rawLevel) || 0)) : 0;
-          waveBars.forEach((bar, index) => {
-            bar.style.height = `${4 + level * 13 * waveShape[index]}px`;
-          });
-        });
-      }
+      pill.classList.toggle('wide', state === 'error' || (sub.textContent || '').length > 30);
     }
+
+    window.freesia.onOverlayState((msg) => render(typeof msg === 'string' ? { state: msg } : (msg || {})));
+    window.freesia.onOverlayTimer((t) => { timer.textContent = t; });
+    window.freesia.onOverlayAudioLevel((level) => {
+      const l = pill.classList.contains('listening') ? Math.max(0, Math.min(1, Number(level) || 0)) : 0;
+      orb.setLevel(l);
+      pill.style.setProperty('--lvl', l.toFixed(3));
+    });
   </script>
 </body>
 </html>

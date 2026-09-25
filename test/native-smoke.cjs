@@ -32,17 +32,17 @@ app.whenReady().then(async()=>{
     assert.equal(await main.webContents.executeJavaScript('freesia.getSetting("errorReporting")'),true,'new install defaults reporting on');
     await main.webContents.executeJavaScript('freesia.setSetting("errorReporting",false)');
     main.show();
-    await main.webContents.executeJavaScript('showPage("pageOnboarding");goToOnboardingStep(1);');
+    await main.webContents.executeJavaScript('showScreen("screenOnboarding");obGo(1);');
     await sleep(500);
     fs.writeFileSync(path.join(artifacts,'onboarding.png'),(await main.webContents.capturePage()).toPNG());
-    await main.webContents.executeJavaScript('showPage("pageMain");renderUpdateStatus({status:"downloaded",message:"Version 2.5.0 is ready. Restart to install.",updateInfo:{version:"2.5.0"}});');
+    await main.webContents.executeJavaScript('showScreen("screenMain");renderUpdateStatus({status:"downloaded",message:"Version 2.5.0 is ready. Restart to install.",updateInfo:{version:"2.5.0"}});');
     await sleep(500);
     fs.writeFileSync(path.join(artifacts,'home.png'),(await main.webContents.capturePage()).toPNG());
     const devices=await main.webContents.executeJavaScript('navigator.mediaDevices.enumerateDevices().then(ds=>ds.filter(d=>d.kind==="audioinput").length)');
     assert(devices>0);
     await overlay.webContents.executeJavaScript('window.levels=[];window.freesia.onOverlayAudioLevel(v=>window.levels.push(v));true;');
     await main.webContents.executeJavaScript(`
-      showPage('pageMain');
+      showScreen('screenMain');
       window.fetch=async()=>({ok:true,status:200,json:async()=>({candidates:[{content:{parts:[{text:'Synthetic speech test'}]}}]})});
       window.signalContext = new AudioContext();
       window.tone = signalContext.createOscillator();

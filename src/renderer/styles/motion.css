@@ -1,0 +1,56 @@
+/* ==========================================================
+   Freesia 3 — motion
+   ========================================================== */
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes ambient-drift { 0% { translate: 0 0; } 50% { translate: -18vw 6vh; } 100% { translate: -30vw -4vh; } }
+@keyframes ping { 0% { transform: scale(0.6); opacity: 0.9; } 80%, 100% { transform: scale(1.9); opacity: 0; } }
+@keyframes bloom-slide { to { background-position: -200% 0; } }
+@keyframes word-in { to { opacity: 1; filter: none; transform: none; } }
+@keyframes toast-in { from { opacity: 0; transform: translateY(18px) scale(0.92); filter: blur(4px); } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(8px) scale(0.96); filter: blur(3px); } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes fade-out { to { opacity: 0; } }
+@keyframes dialog-in { from { opacity: 0; transform: translateY(16px) scale(0.96); } }
+@keyframes dialog-out { to { opacity: 0; transform: translateY(8px) scale(0.98); } }
+@keyframes rise { from { opacity: 0; transform: translateY(12px); filter: blur(3px); } }
+@keyframes pop { 0% { transform: scale(0.6); opacity: 0; } 70% { transform: scale(1.08); } 100% { transform: scale(1); opacity: 1; } }
+@keyframes shimmer { to { background-position: -200% 0; } }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+@keyframes petal-sway { 0%, 100% { transform: rotate(var(--r, 0deg)) scaleY(1); } 50% { transform: rotate(calc(var(--r, 0deg) + 6deg)) scaleY(1.06); } }
+
+/* Staggered entrance for anything marked .stagger inside a freshly shown view */
+.view.entering .stagger > *,
+.view.entering .stagger-self {
+  animation: rise 560ms var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 45ms + 60ms);
+}
+.list-enter { animation: rise 420ms var(--ease-out) both; animation-delay: calc(var(--i, 0) * 30ms); }
+.list-leave { animation: fade-out 220ms var(--ease-in-out) both; }
+.pop { animation: pop 420ms var(--spring) both; }
+.shimmer-text {
+  background: linear-gradient(90deg, var(--ink-3) 0%, var(--ink) 45%, var(--ink-3) 90%);
+  background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: shimmer 1.6s linear infinite;
+}
+
+/* Page transitions (View Transitions API) */
+::view-transition-old(sheet-content) { animation: 200ms var(--ease-in-out) both vt-out; }
+::view-transition-new(sheet-content) { animation: 420ms var(--ease-out) both vt-in; }
+@keyframes vt-out { to { opacity: 0; transform: translateY(-6px) scale(0.995); filter: blur(4px); } }
+@keyframes vt-in { from { opacity: 0; transform: translateY(10px) scale(0.995); filter: blur(6px); } }
+.sheet { view-transition-name: sheet-content; }
+::view-transition-group(root) { animation-duration: 0s; }
+
+/* Brand mark petals sway gently */
+#i-flower .petal { transform-origin: 16px 16.2px; transform-box: view-box; animation: petal-breathe 7s var(--ease-in-out) infinite; }
+#i-flower .petal:nth-child(2) { animation-delay: -1.4s; }
+#i-flower .petal:nth-child(3) { animation-delay: -2.8s; }
+#i-flower .petal:nth-child(4) { animation-delay: -4.2s; }
+#i-flower .petal:nth-child(5) { animation-delay: -5.6s; }
+@keyframes petal-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
+  .output .word { opacity: 1; filter: none; transform: none; }
+}

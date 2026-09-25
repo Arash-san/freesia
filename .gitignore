@@ -17,3 +17,12 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Build outputs and signing files for the Android app
+android/dist/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.jks
+keystore.properties

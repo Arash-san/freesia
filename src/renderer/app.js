@@ -1,1155 +1,487 @@
-// ============================================
-// Freesia - Main Application Logic
-// ============================================
-
+// ==========================================================
+// Freesia 3 — renderer
+// ==========================================================
 const api = window.freesia;
+const { $, $$, h, escapeHtml, icon, isRtl, toast, dialog, confirmDialog, countUp, segmented, formatDuration, clock, bytes, kbdHtml, dayLabel, revealText } = window.UI;
 
-// ============================================
-// State
-// ============================================
+// ---------------------------------------------------------- state
 let settings = {};
-let isRecording = false;
-let isProcessingAudio = false;
-let mediaRecorder = null;
-let audioChunks = [];
-let audioContext = null;
-let analyser = null;
-let animFrameId = null;
-let availableModels = [];
-let errorLog = [];
+let engineState = { engine: 'cloud', formatter: 'auto', cloud: {}, local: { models: {} }, gemini: {} };
 let activeStyleId = 'normal';
-let lastDetectedApp = '';
-let recordingStartTime = null;
-let recordingTimerInterval = null;
-let currentUpdateStatus = { status: 'idle', message: 'Update checks are ready.' };
-let lastOverlayLevelSentAt = 0;
-let recordingSession = 0;
+let currentView = 'home';
+let errorLog = [];
+let updateStatus = { status: 'idle', message: 'Update checks are ready.' };
+
+let isRecording = false;
 let isStartingRecording = false;
 let isStoppingRecording = false;
-const modelCooldowns = new Map();
+let isProcessingAudio = false;
+let recordingSession = 0;
+let mediaRecorder = null;
+let audioContext = null;
+let analyser = null;
+let meterTimer = null;
+let recordingStartTime = null;
+let recordingTimer = null;
+let lastOverlayLevelAt = 0;
+let homeOrb = null;
+let obOrb = null;
+let lastOutputText = '';
 
-const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
-const PREFERRED_GEMINI_MODELS = [
-  DEFAULT_GEMINI_MODEL,
-  'gemini-3.1-flash-lite',
-  'gemini-3.6-flash',
-  'gemini-3.7-flash',
-  'gemini-3-flash-preview'
-];
-// Current stable audio-input models used only if model discovery is unavailable.
-// When discovery succeeds, fallbacks come from the models available to that
-// user's API key so Freesia never forces a retired or inaccessible model.
-const TRANSCRIBE_FALLBACK_MODELS = [
-  'gemini-3.6-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-3.1-flash-lite'
-];
-const BLOCKED_MODEL_ID_PATTERNS = [
-  'embedding',
-  'aqa',
-  'imagen',
-  'veo',
-  'image',
-  'tts',
-  'live',
-  'computer',
-  'learnlm'
-];
-const BLOCKED_MODEL_TEXT_PATTERNS = [
-  'nano banana',
-  'nano-banana',
-  'text-to-speech',
-  'text to speech',
-  'computer use',
-  'computer-use'
+const ENGINE_LABELS = { cloud: 'Freesia Cloud', local: 'On this PC', gemini: 'Google Gemini' };
+const FALLBACK_ORDER = ['cloud', 'local', 'gemini'];
+const TYPING_WPM = 40;
+const LANGUAGES = [
+  ['auto', 'Automatic'], ['en', 'English'], ['fa', 'Persian (فارسی)'], ['ar', 'Arabic'], ['zh', 'Chinese'], ['de', 'German'],
+  ['fr', 'French'], ['es', 'Spanish'], ['pt', 'Portuguese'], ['it', 'Italian'], ['ja', 'Japanese'], ['ko', 'Korean'],
+  ['ru', 'Russian'], ['tr', 'Turkish'], ['hi', 'Hindi'], ['nl', 'Dutch'], ['pl', 'Polish'], ['uk', 'Ukrainian'],
+  ['vi', 'Vietnamese'], ['th', 'Thai'], ['id', 'Indonesian'], ['sv', 'Swedish'], ['he', 'Hebrew'], ['ur', 'Urdu']
 ];
 
-// ============================================
-// Error Logging
-// ============================================
+// ---------------------------------------------------------- errors
 function logError(context, error) {
-  const entry = {
-    timestamp: new Date().toISOString(),
-    context,
-    message: error?.message || String(error),
-    stack: error?.stack || ''
-  };
+  const entry = { timestamp: new Date().toISOString(), context, message: error?.message || String(error), stack: error?.stack || '' };
   errorLog.push(entry);
-  if (errorLog.length > 200) errorLog.splice(0, errorLog.length - 200);
+  if (errorLog.length > 100) errorLog.splice(0, errorLog.length - 100);
   console.error(`[${context}]`, error);
-  // Save to persistent storage
-  api.setSetting('errorLog', errorLog);
-  // Write to persistent log file
-  api.logToFile('ERROR', context, entry.message, entry.stack);
-  // Fire-and-forget opt-in report (main process no-ops unless enabled)
+  api.logToFile?.('ERROR', context, entry.message, entry.stack);
   api.sendErrorReport?.({ level: 'ERROR', context, message: entry.message, stack: entry.stack });
 }
+window.onerror = (msg, src, line, col, err) => logError('window.onerror', { message: `${msg} at ${src}:${line}:${col}`, stack: err?.stack || '' });
+window.addEventListener('unhandledrejection', (e) => logError('unhandledrejection', e.reason));
 
-// ============================================
-// Utilities for Large Audio
-// ============================================
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 8192;
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode.apply(null, chunk);
-  }
-  return btoa(binary);
-}
-
-// ============================================
-// Recording Timer
-// ============================================
-function startRecordingTimer() {
-  recordingStartTime = Date.now();
-  const timerEl = document.getElementById('recordingTimer');
-  const timeEl = document.getElementById('recordingTime');
-  if (timerEl) timerEl.style.display = 'flex';
-  if (timeEl) timeEl.textContent = '0:00';
-  recordingTimerInterval = setInterval(() => {
-    const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
-    const min = Math.floor(elapsed / 60);
-    const sec = elapsed % 60;
-    const timeStr = `${min}:${sec.toString().padStart(2, '0')}`;
-    if (timeEl) timeEl.textContent = timeStr;
-    // Also update overlay with time
-    if (api.overlayTimer) api.overlayTimer(timeStr);
-  }, 1000);
-}
-
-function stopRecordingTimer() {
-  if (recordingTimerInterval) {
-    clearInterval(recordingTimerInterval);
-    recordingTimerInterval = null;
-  }
-}
-
-function getRecordingDuration() {
-  if (!recordingStartTime) return '0:00';
-  const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
-  const min = Math.floor(elapsed / 60);
-  const sec = elapsed % 60;
-  return `${min}:${sec.toString().padStart(2, '0')}`;
-}
-
-function getRecordingSeconds() {
-  if (!recordingStartTime) return 0;
-  return Math.max(0, Math.round((Date.now() - recordingStartTime) / 1000));
-}
-
-function hideRecordingTimer() {
-  stopRecordingTimer();
-  const timerEl = document.getElementById('recordingTimer');
-  if (timerEl) timerEl.style.display = 'none';
-  recordingStartTime = null;
-}
-
-function viewErrorLog() {
-  const log = errorLog.length > 0
-    ? errorLog.map(e => `[${e.timestamp}] ${e.context}: ${e.message}\n${e.stack}`).join('\n\n---\n\n')
-    : 'No errors recorded.';
-  // Save to file via main process and open
-  api.saveAndOpenLog(log);
-}
-
-// Catch unhandled errors globally
-window.onerror = (msg, src, line, col, err) => {
-  logError('window.onerror', { message: `${msg} at ${src}:${line}:${col}`, stack: err?.stack || '' });
-};
-window.addEventListener('unhandledrejection', (e) => {
-  logError('unhandledrejection', e.reason);
-});
-
-// ============================================
-// Initialization
-// ============================================
-document.addEventListener('DOMContentLoaded', async () => {
-  settings = await api.getSettings();
-  applyTheme({
-    source: settings.theme || 'system',
-    shouldUseDarkColors: window.matchMedia?.('(prefers-color-scheme: dark)').matches
-  });
-  errorLog = settings.errorLog || [];
-  if (settings.onboarded && settings.apiKey) {
-    showPage('pageMain');
-  } else {
-    showPage('pageOnboarding');
-  }
-  bindEvents();
-  activeStyleId = settings.activeStyle || 'normal';
-  setupIpcListeners();
-  setupUpdateListeners();
-  setupThemeListeners();
-  updateSettingsUI();
-  initTheme();
-  initAppMetadata();
-  updateDashboardStats();
-  renderDictionary();
-  renderSnippets();
-  renderHistory();
-  renderStyleGrid();
-  loadFailedRecordings();
-  loadStylesFromDisk();
-  loadMicrophones();
-  navigator.mediaDevices?.addEventListener?.('devicechange', loadMicrophones);
-  // Place the segmented-nav highlight once the top bar has laid out
-  requestAnimationFrame(positionNavIndicator);
-});
-
-// ============================================
-// Page Navigation
-// ============================================
-function showPage(pageId) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  const page = document.getElementById(pageId);
-  if (page) page.classList.add('active');
-}
-
-function showContentPage(pageId) {
-  document.querySelectorAll('.view').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.topnav-item').forEach(n => n.classList.remove('active'));
-  const page = document.getElementById(pageId);
-  if (page) page.classList.add('active');
-  const nav = document.querySelector(`.topnav-item[data-page="${pageId.replace('Page', '')}"]`);
-  if (nav) nav.classList.add('active');
-  positionNavIndicator();
-  // Scroll the stage back to the top on view change
-  const stage = document.querySelector('.stage');
-  if (stage) stage.scrollTop = 0;
-}
-
-// Slide the segmented-nav highlight under the active item
-function positionNavIndicator() {
-  const indicator = document.getElementById('topnavIndicator');
-  const active = document.querySelector('.topnav-item.active');
-  if (!indicator || !active) return;
-  indicator.style.width = `${active.offsetWidth}px`;
-  indicator.style.transform = `translateX(${active.offsetLeft - 4}px)`;
-}
-
-// ============================================
-// Event Bindings
-// ============================================
-function bindEvents() {
-  // Window chrome
-  document.getElementById('btnMinimize')?.addEventListener('click', () => api.minimize());
-  document.getElementById('btnClose')?.addEventListener('click', () => api.close());
-
-  // Onboarding
-  document.getElementById('btnGetStarted')?.addEventListener('click', () => goToOnboardingStep(2));
-  document.getElementById('btnBack2')?.addEventListener('click', () => goToOnboardingStep(1));
-  document.getElementById('btnNext2')?.addEventListener('click', validateApiKey);
-  document.getElementById('btnBack3')?.addEventListener('click', () => goToOnboardingStep(2));
-  document.getElementById('btnFinish')?.addEventListener('click', finishOnboarding);
-  document.getElementById('btnToggleKey')?.addEventListener('click', toggleKeyVisibility);
-  document.getElementById('getKeyLink')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    api.openExternal('https://aistudio.google.com/app/apikey');
-  });
-
-  // API key input
-  const apiInput = document.getElementById('apiKeyInput');
-  if (apiInput) {
-    apiInput.addEventListener('input', () => {
-      document.getElementById('btnNext2').disabled = apiInput.value.trim().length < 10;
-    });
-    apiInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && apiInput.value.trim().length >= 10) validateApiKey();
-    });
-  }
-
-  // Top segmented nav
-  document.querySelectorAll('.topnav-item[data-page]').forEach(btn => {
-    btn.addEventListener('click', () => showContentPage(btn.dataset.page + 'Page'));
-  });
-  document.getElementById('navSettings')?.addEventListener('click', () => {
-    showPage('pageSettings');
-    renderAppRules();
-  });
-  document.getElementById('btnBackSettings')?.addEventListener('click', () => {
-    showPage('pageMain');
-    // Recompute the nav highlight now that the bar is measurable again
-    requestAnimationFrame(positionNavIndicator);
-  });
-  document.getElementById('btnThemeToggle')?.addEventListener('click', toggleTheme);
-  // Keep the nav highlight aligned when the window resizes
-  window.addEventListener('resize', positionNavIndicator);
-
-  // Settings
-  document.getElementById('btnChangeKey')?.addEventListener('click', () => {
-    goToOnboardingStep(2);
-    showPage('pageOnboarding');
-  });
-  document.getElementById('toggleFormatting')?.addEventListener('change', (e) => saveSetting('aiFormatting', e.target.checked));
-  document.getElementById('selectLanguage')?.addEventListener('change', (e) => saveSetting('language', e.target.value));
-  document.getElementById('selectMicrophone')?.addEventListener('change', (e) => saveSetting('microphoneId', e.target.value));
-  document.getElementById('selectTheme')?.addEventListener('change', (e) => setTheme(e.target.value));
-  document.getElementById('toggleAutoLaunch')?.addEventListener('change', (e) => {
-    api.setAutoLaunch(e.target.checked);
-  });
-  document.getElementById('toggleKeepRecordings')?.addEventListener('change', (e) => saveSetting('keepSuccessRecordings', e.target.checked));
-  document.getElementById('toggleOverlay')?.addEventListener('change', (e) => saveSetting('showOverlay', e.target.checked));
-  document.getElementById('toggleSounds')?.addEventListener('change', (e) => saveSetting('sounds', e.target.checked));
-
-  // Processing tools
-  document.getElementById('toolTrimSpelling')?.addEventListener('change', (e) => saveSetting('toolTrimSpelling', e.target.checked));
-  document.getElementById('toolSpokenEmoji')?.addEventListener('change', (e) => saveSetting('toolSpokenEmoji', e.target.checked));
-  document.getElementById('toolPolish')?.addEventListener('change', (e) => saveSetting('toolPolish', e.target.checked));
-
-  // Error reporting + folders
-  document.getElementById('toggleErrorReporting')?.addEventListener('change', (e) => {
-    saveSetting('errorReporting', e.target.checked);
-    const onboardingToggle = document.getElementById('onboardingErrorReporting');
-    if (onboardingToggle) onboardingToggle.checked = e.target.checked;
-    showToast(e.target.checked ? 'Error reporting on — thank you 🌸' : 'Error reporting off', 'info');
-  });
-  document.getElementById('onboardingErrorReporting')?.addEventListener('change', (e) => {
-    saveSetting('errorReporting', e.target.checked);
-    document.getElementById('toggleErrorReporting').checked = e.target.checked;
-  });
-  document.getElementById('btnImportStyle')?.addEventListener('click', importStyleFile);
-  document.getElementById('btnOpenStylesFolder')?.addEventListener('click', () => api.openStylesFolder?.());
-  document.getElementById('btnNewStyleSettings')?.addEventListener('click', () => openStyleEditor());
-  document.getElementById('btnGitHub')?.addEventListener('click', () => api.openExternal('https://github.com/arash-san/freesia'));
-  document.getElementById('btnCheckUpdates')?.addEventListener('click', checkForUpdates);
-  document.getElementById('btnDownloadUpdate')?.addEventListener('click', downloadUpdate);
-  document.getElementById('btnInstallUpdate')?.addEventListener('click', installUpdate);
-  document.getElementById('btnHomeUpdate')?.addEventListener('click', () => {
-    if (currentUpdateStatus.status === 'available') return downloadUpdate();
-    if (currentUpdateStatus.status === 'downloaded') return installUpdate();
-    return checkForUpdates();
-  });
-  window.addEventListener('online', checkForUpdates);
-
-  // Danger Zone
-  document.getElementById('btnViewErrors')?.addEventListener('click', viewErrorLog);
-  document.getElementById('btnResetSettings')?.addEventListener('click', resetAllSettings);
-
-  // Styles
-  document.getElementById('toggleAutoStyle')?.addEventListener('change', (e) => saveSetting('autoStyleSwitch', e.target.checked));
-
-  // Dictionary
-  document.getElementById('btnAddWord')?.addEventListener('click', () => {
-    const el = document.getElementById('dictionaryInput');
-    el.style.display = el.style.display === 'none' ? 'block' : 'none';
-    document.getElementById('newWordInput')?.focus();
-  });
-  document.getElementById('btnSaveWord')?.addEventListener('click', addWord);
-  document.getElementById('btnCancelWord')?.addEventListener('click', () => {
-    document.getElementById('dictionaryInput').style.display = 'none';
-  });
-  document.getElementById('newWordInput')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') addWord();
-  });
-
-  // Snippets
-  document.getElementById('btnAddSnippet')?.addEventListener('click', () => {
-    currentEditSnippetId = null;
-    document.getElementById('snippetTrigger').value = '';
-    document.getElementById('snippetExpansion').value = '';
-    const el = document.getElementById('snippetForm');
-    el.style.display = el.style.display === 'none' ? 'block' : 'none';
-  });
-  document.getElementById('btnSaveSnippet')?.addEventListener('click', saveSnippet);
-  document.getElementById('btnCancelSnippet')?.addEventListener('click', () => {
-    document.getElementById('snippetForm').style.display = 'none';
-  });
-
-  // History
-  document.getElementById('btnClearHistory')?.addEventListener('click', async () => {
-    await saveSetting('history', []);
-    settings.history = [];
-    renderHistory();
-    showToast('History cleared', 'info');
-  });
-
-  // Mic test
-  document.getElementById('btnMicTest')?.addEventListener('click', toggleMicTest);
-}
-
-// ============================================
-// Onboarding
-// ============================================
-function goToOnboardingStep(step) {
-  document.querySelectorAll('.onboarding-step').forEach(s => s.classList.remove('active'));
-  const el = document.getElementById(`step${step}`);
-  if (el) {
-    el.classList.add('active');
-    el.scrollTop = 0;
-  }
-}
-
-function toggleKeyVisibility() {
-  const input = document.getElementById('apiKeyInput');
-  if (input.type === 'password') {
-    input.type = 'text';
-    document.getElementById('btnToggleKey').textContent = '🙈';
-  } else {
-    input.type = 'password';
-    document.getElementById('btnToggleKey').textContent = '👁';
-  }
-}
-
-async function validateApiKey() {
-  const key = document.getElementById('apiKeyInput').value.trim();
-  const statusEl = document.getElementById('apiStatus');
-  const btn = document.getElementById('btnNext2');
-  
-  btn.disabled = true;
-  btn.textContent = 'Validating...';
-  statusEl.className = 'api-status loading';
-  statusEl.innerHTML = '<span class="spinner"></span> Testing connection...';
-
-  try {
-    // Validate by listing models (works for any valid key)
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${key}&pageSize=1`,
-      {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
-      }
-    );
-
-    if (response.ok) {
-      statusEl.className = 'api-status success';
-      statusEl.innerHTML = '✅ Connected! Fetching available models...';
-      await saveSetting('apiKey', key);
-      settings.apiKey = key;
-      await fetchAvailableModels();
-      statusEl.innerHTML = '✅ Connected successfully!';
-      setTimeout(() => goToOnboardingStep(3), 600);
-    } else {
-      const err = await response.json();
-      statusEl.className = 'api-status error';
-      statusEl.innerHTML = `❌ ${err.error?.message || 'Invalid API key'}`;
-    }
-  } catch (e) {
-    statusEl.className = 'api-status error';
-    statusEl.innerHTML = '❌ Network error. Check your connection.';
-  }
-
-  btn.disabled = false;
-  btn.textContent = 'Validate & Continue';
-}
-
-async function finishOnboarding() {
-  await saveSetting('onboarded', true);
-  settings.onboarded = true;
-  showPage('pageMain');
-  requestAnimationFrame(positionNavIndicator);
-  showToast('Welcome to Freesia! 🌸', 'success');
-}
-
-// ============================================
-// Settings
-// ============================================
 async function saveSetting(key, value) {
   settings[key] = value;
   await api.setSetting(key, value);
 }
 
-function normalizeModelId(modelId) {
-  return (modelId || '').replace(/^models\//, '').toLowerCase();
-}
-
-function isBlockedModel(model) {
-  const id = normalizeModelId(typeof model === 'string' ? model : (model.id || model.name));
-  const name = typeof model === 'string' ? '' : (model.displayName || model.name || '');
-  const desc = typeof model === 'string' ? '' : (model.description || '');
-  const text = `${name} ${desc}`.toLowerCase();
-
-  return BLOCKED_MODEL_ID_PATTERNS.some(pattern => id.includes(pattern))
-    || BLOCKED_MODEL_TEXT_PATTERNS.some(pattern => text.includes(pattern));
-}
-
-function pickPreferredGeminiModel(models) {
-  const availableIds = models.map(m => normalizeModelId(m.id));
-  const preferred = PREFERRED_GEMINI_MODELS.find(id => availableIds.includes(id));
-  return preferred || models[0]?.id || DEFAULT_GEMINI_MODEL;
-}
-
-function getSelectedModel() {
-  if (settings.geminiModel && !isBlockedModel(settings.geminiModel)) {
-    return settings.geminiModel;
-  }
-  return DEFAULT_GEMINI_MODEL;
-}
-
-// The ordered list of models transcription will try: the user's pick first,
-// then up to three stable Flash models that model discovery confirmed are
-// available to the user's key. The static list is only an offline fallback.
-function buildTranscribeModels(primary, discoveredModels = availableModels) {
-  const discoveredFallbacks = (discoveredModels || [])
-    .map(model => normalizeModelId(typeof model === 'string' ? model : model?.id))
-    .filter(id => id
-      && id.startsWith('gemini-3')
-      && id.includes('flash')
-      && !id.includes('preview')
-      && !id.includes('experimental')
-      && !id.includes('latest')
-      && !isBlockedModel(id));
-  const fallbacks = discoveredModels?.length ? discoveredFallbacks : TRANSCRIBE_FALLBACK_MODELS;
-  const models = [...new Set([normalizeModelId(primary), ...fallbacks].filter(Boolean))];
-  const healthy = models.filter(id => !(modelCooldowns.get(id) > Date.now()));
-  return (healthy.length ? healthy : models).slice(0, 4);
-}
-
-async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 25000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    let data;
-    try { data = await response.json(); }
-    catch (error) { if (response.ok || controller.signal.aborted) throw error; data = {}; }
-    return { ok: response.ok, status: response.status, data };
-  } catch (error) {
-    if (controller.signal.aborted) throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)} seconds`);
-    throw error;
-  } finally { clearTimeout(timer); }
-}
-
-function responseText(data) {
-  return (data.candidates?.[0]?.content?.parts || [])
-    .filter(part => !part.thought && typeof part.text === 'string')
-    .map(part => part.text).join('').trim();
-}
-
-function summarizeTranscriptionFailure(error, primaryModel, attemptedModels) {
-  const fallbackCount = Math.max(0, attemptedModels.length - 1);
-  const detail = error?.message || 'Unknown error';
-  if (fallbackCount === 0) return `Selected model ${primaryModel} failed: ${detail}`;
-  return `Selected model ${primaryModel} and ${fallbackCount} fallback model${fallbackCount === 1 ? '' : 's'} failed. Last fallback error: ${detail}`;
-}
-
-async function fetchAvailableModels() {
-  if (!settings.apiKey) return;
-  try {
-    const response = await fetchJsonWithTimeout(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${settings.apiKey}&pageSize=100`, {}, 10000
-    );
-    if (!response.ok) return;
-    const data = response.data;
-
-    // Voice-capable keywords — models that can handle audio input
-    const voiceCapablePatterns = ['flash', 'pro', '2.5', '2.0', '3.0', '3.1'];
-
-    const models = (data.models || [])
-      .filter(m => {
-        const methods = m.supportedGenerationMethods || [];
-        const id = m.name.replace('models/', '').toLowerCase();
-        const desc = (m.description || '').toLowerCase();
-        // Must support generateContent
-        if (!methods.includes('generateContent')) return false;
-        // Exclude image, Nano Banana, TTS, Live, computer-use, and other non-dictation models
-        if (isBlockedModel(m)) return false;
-        // Must be a gemini model
-        if (!id.startsWith('gemini')) return false;
-        // Check for multimodal/audio support in description or modern model versions
-        const isMultimodal = desc.includes('audio') || desc.includes('multimodal') || desc.includes('image');
-        const isModern = voiceCapablePatterns.some(p => id.includes(p));
-        return isMultimodal || isModern;
-      })
-      .map(m => {
-        const id = m.name.replace('models/', '');
-        return {
-          id,
-          name: m.displayName || id,
-          description: m.description || '',
-          inputTokenLimit: m.inputTokenLimit || 0,
-          outputTokenLimit: m.outputTokenLimit || 0
-        };
-      })
-      .sort((a, b) => {
-        const getPreference = (id) => {
-          const index = PREFERRED_GEMINI_MODELS.indexOf(normalizeModelId(id));
-          return index === -1 ? Number.MAX_SAFE_INTEGER : index;
-        };
-        const preferenceDiff = getPreference(a.id) - getPreference(b.id);
-        if (preferenceDiff !== 0) return preferenceDiff;
-
-        const getVersion = (id) => {
-          const match = id.match(/(\d+\.\d+)/);
-          return match ? parseFloat(match[1]) : 0;
-        };
-        return getVersion(b.id) - getVersion(a.id);
-      });
-
-    availableModels = models;
-    renderModelCards();
-
-    // Auto-select best model if none is saved
-    if ((!settings.geminiModel || isBlockedModel(settings.geminiModel)) && models.length > 0) {
-      const best = pickPreferredGeminiModel(models);
-      await saveSetting('geminiModel', best);
-      settings.geminiModel = best;
-      renderModelCards();
-    }
-  } catch (e) {
-    logError('fetchAvailableModels', e);
-  }
-}
-
-function renderModelCards() {
-  const containers = document.querySelectorAll('.model-list');
-  if (containers.length === 0) return;
-
-  const selected = settings.geminiModel || '';
-
-  const html = availableModels.length === 0
-    ? '<div class="model-card glass-card loading-card"><span class="text-muted">No voice-capable models found</span></div>'
-    : availableModels.map((m, i) => {
-        const isSelected = m.id === selected;
-        const isFlash = m.id.includes('flash');
-        const isPro = m.id.includes('pro');
-        const isPreview = m.id.includes('preview');
-        const isLatest = i === 0;
-
-        let badges = '';
-        if (isLatest) badges += '<span class="model-badge latest">Latest</span>';
-        if (isFlash) badges += '<span class="model-badge flash">Fast</span>';
-        if (isPro) badges += '<span class="model-badge pro">Pro</span>';
-        if (isPreview) badges += '<span class="model-badge preview">Preview</span>';
-
-        return `
-          <div class="model-card glass-card ${isSelected ? 'selected' : ''}" data-model-id="${m.id}" onclick="selectModel('${m.id}')">
-            <div class="model-radio"></div>
-            <div class="model-details">
-              <div class="model-name">${escapeHtml(m.name)}</div>
-              <div class="model-id">${m.id}</div>
-            </div>
-            <div class="model-badges">${badges}</div>
-          </div>
-        `;
-      }).join('');
-
-  containers.forEach(c => { c.innerHTML = html; });
-}
-
-async function selectModel(modelId) {
-  await saveSetting('geminiModel', modelId);
-  settings.geminiModel = modelId;
-  renderModelCards();
-  showToast(`Model set to ${modelId}`, 'success');
-}
-
-async function resetAllSettings() {
-  if (!confirm('Are you sure? This will clear your API key, dictionary, snippets, history, and all settings.')) return;
-  const keys = ['apiKey', 'onboarded', 'geminiModel', 'microphoneId', 'aiFormatting', 'language', 'theme',
-    'autoLaunch', 'showOverlay', 'sounds', 'keepSuccessRecordings', 'dictionary', 'snippets',
-    'history', 'stats', 'errorLog', 'customStyles', 'toolTrimSpelling', 'toolSpokenEmoji',
-    'toolPolish', 'errorReporting', 'activeStyle', 'autoStyleSwitch', 'styleOverrides'];
-  for (const k of keys) await api.setSetting(k, undefined);
+// ==========================================================
+// Boot
+// ==========================================================
+document.addEventListener('DOMContentLoaded', async () => {
   settings = await api.getSettings();
-  availableModels = [];
-  errorLog = [];
-  goToOnboardingStep(1);
-  showPage('pageOnboarding');
-  showToast('Settings reset. Welcome back!', 'info');
-}
+  applyTheme({ source: settings.theme || 'system', shouldUseDarkColors: window.matchMedia?.('(prefers-color-scheme: dark)').matches });
+  activeStyleId = settings.activeStyle || 'normal';
+  try { engineState = await api.engineStatus?.() || engineState; } catch (e) { logError('engineStatus', e); }
 
-function updateSettingsUI() {
-  if (settings.apiKey) {
-    const masked = settings.apiKey.substring(0, 6) + '••••••••';
-    const el = document.getElementById('settingsApiPreview');
-    if (el) el.textContent = masked;
-    // Fetch models if we have a key but haven't loaded them yet
-    if (availableModels.length === 0) fetchAvailableModels();
+  bindChrome();
+  bindOnboarding();
+  bindHome();
+  bindHistory();
+  bindStyles();
+  bindVocabulary();
+  bindEngines();
+  bindSettings();
+  setupIpcListeners();
+
+  showScreen(settings.onboarded ? 'screenMain' : 'screenOnboarding');
+  if (!settings.onboarded) obGo(0);
+
+  renderShortcuts();
+  updateSettingsUI();
+  updateDashboardStats();
+  renderDictionary();
+  renderSnippets();
+  renderHistory();
+  renderStyleGrid();
+  renderAppRules();
+  renderEngines();
+  renderEnginePill();
+  renderGreeting();
+  loadFailedRecordings();
+  loadStylesFromDisk();
+  loadMicrophones();
+  initAppMetadata();
+  initTheme();
+  navigator.mediaDevices?.addEventListener?.('devicechange', loadMicrophones);
+  requestAnimationFrame(positionNavIndicator);
+  window.addEventListener('resize', positionNavIndicator);
+  if (typeof window.createBloomOrb === 'function' && $('homeOrb')?.getContext) {
+    try { homeOrb = window.createBloomOrb($('homeOrb'), { palette: bloomPalette() }); } catch (e) { logError('orb', e); }
   }
-  const fmt = document.getElementById('toggleFormatting');
-  if (fmt) fmt.checked = settings.aiFormatting !== false;
-  const lang = document.getElementById('selectLanguage');
-  if (lang) lang.value = settings.language || 'en';
-  const microphone = document.getElementById('selectMicrophone');
-  if (microphone) microphone.value = settings.microphoneId || '';
-  const theme = document.getElementById('selectTheme');
-  if (theme) theme.value = settings.theme || 'system';
-  const al = document.getElementById('toggleAutoLaunch');
-  if (al) al.checked = settings.autoLaunch || false;
-  const kr = document.getElementById('toggleKeepRecordings');
-  if (kr) kr.checked = settings.keepSuccessRecordings || false;
-  const ov = document.getElementById('toggleOverlay');
-  if (ov) ov.checked = settings.showOverlay !== false;
-  const snd = document.getElementById('toggleSounds');
-  if (snd) snd.checked = settings.sounds !== false;
-  const tts = document.getElementById('toolTrimSpelling');
-  if (tts) tts.checked = !!settings.toolTrimSpelling;
-  const tse = document.getElementById('toolSpokenEmoji');
-  if (tse) tse.checked = !!settings.toolSpokenEmoji;
-  const tp = document.getElementById('toolPolish');
-  if (tp) tp.checked = !!settings.toolPolish;
-  const er = document.getElementById('toggleErrorReporting');
-  if (er) er.checked = !!settings.errorReporting;
-  const onboardingEr = document.getElementById('onboardingErrorReporting');
-  if (onboardingEr) onboardingEr.checked = !!settings.errorReporting;
+  if (settings.onboarded && !settings.seenV3) setTimeout(showWhatsNew, 900);
+});
+
+// One-time note for people upgrading from 2.x, who were all on Gemini
+async function showWhatsNew() {
+  await saveSetting('seenV3', true);
+  const body = h('div.rows', {}, [
+    ['cloud', 'Free, fast speech recognition', 'Freesia Cloud connects to a Freesia Voice server running Qwen3-ASR. Sign in with the account you were given.'],
+    ['chip', 'Private, offline dictation', 'Download Qwen3-ASR once and it runs on your own graphics card or CPU.'],
+    ['styles', 'A brand new Freesia', 'Redesigned from scratch, with command mode that finally edits your selection.']
+  ].map(([ic, title, desc]) => h('div.row', {}, [h('span.engine-glyph', { html: icon(ic) }), h('span.row-text', {}, [h('span.row-title', { text: title }), h('span.row-desc', { style: { display: 'block' }, text: desc })])])));
+  const go = await dialog({ title: 'Welcome to Freesia 3', text: 'You no longer need a paid Gemini key. Your key, words, snippets and history came along.', body,
+    actions: [{ label: 'Later', kind: 'ghost', value: false }, { label: 'Choose an engine', kind: 'primary', value: true }] });
+  if (go) showView('engines');
 }
 
-function applyTheme(themeInfo = {}) {
-  const source = themeInfo.source || settings.theme || 'system';
-  const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true;
-  const shouldUseDarkColors = source === 'dark'
-    || (source === 'system' && (themeInfo.shouldUseDarkColors ?? prefersDark));
+function bloomPalette() {
+  const s = getComputedStyle(document.documentElement);
+  return [1, 2, 3, 4].map((i) => (s.getPropertyValue(`--orb-${i}`) || '').trim()).filter(Boolean);
+}
 
-  document.documentElement.dataset.theme = shouldUseDarkColors ? 'dark' : 'light';
+function showScreen(id) {
+  $$('.screen').forEach((s) => s.classList.toggle('active', s.id === id));
+  if (id === 'screenMain') requestAnimationFrame(positionNavIndicator);
+}
+
+// ==========================================================
+// Navigation
+// ==========================================================
+function showView(name) {
+  if (!$(`view${cap(name)}`)) return;
+  const swap = () => {
+    currentView = name;
+    $$('.view').forEach((v) => {
+      const on = v.dataset.view === name;
+      v.classList.toggle('active', on);
+      v.classList.toggle('entering', on);
+    });
+    $$('.nav-item').forEach((n) => n.classList.toggle('active', n.dataset.view === name));
+    const view = $(`view${cap(name)}`);
+    if (view) view.scrollTop = 0;
+    $$('.stagger > *', view).forEach((el, i) => el.style.setProperty('--i', i));
+    positionNavIndicator();
+    if (name === 'engines') refreshEngines();
+    if (name === 'history') loadFailedRecordings();
+    setTimeout(() => view?.classList.remove('entering'), 900);
+  };
+  if (document.startViewTransition && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches && currentView !== name) {
+    document.startViewTransition(swap);
+  } else {
+    swap();
+  }
+}
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+function positionNavIndicator() {
+  const ind = $('navIndicator');
+  const active = document.querySelector('.nav-item.active');
+  if (!ind || !active || !active.offsetHeight) return;
+  ind.style.height = `${active.offsetHeight}px`;
+  ind.style.transform = `translateY(${active.offsetTop}px)`;
+}
+
+function bindChrome() {
+  $('btnMinimize')?.addEventListener('click', () => api.minimize());
+  $('btnMaximize')?.addEventListener('click', () => api.toggleMaximize?.());
+  $('btnClose')?.addEventListener('click', () => api.close());
+  $$('.nav-item[data-view]').forEach((b) => b.addEventListener('click', () => showView(b.dataset.view)));
+  $('enginePill')?.addEventListener('click', () => showView('engines'));
+  // Ctrl+1..6 jumps between views
+  document.addEventListener('keydown', (e) => {
+    if (!e.ctrlKey || e.shiftKey || e.altKey || shortcutRecorder) return;
+    const n = Number(e.key);
+    const items = $$('.nav-item[data-view]');
+    if (n >= 1 && n <= items.length && $('screenMain').classList.contains('active')) { e.preventDefault(); showView(items[n - 1].dataset.view); }
+  });
+}
+
+// ==========================================================
+// Theme
+// ==========================================================
+function applyTheme(info = {}) {
+  const source = info.source || settings.theme || 'system';
+  const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true;
+  const dark = source === 'dark' || (source === 'system' && (info.shouldUseDarkColors ?? prefersDark));
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   document.documentElement.dataset.themeSource = source;
+  homeOrb?.setPalette(bloomPalette());
+  obOrb?.setPalette(bloomPalette());
+  themeSeg?.set(source, true);
 }
 
 async function initTheme() {
-  try {
-    const themeInfo = await api.getThemeInfo?.();
-    if (themeInfo) applyTheme(themeInfo);
-  } catch (e) {
-    logError('initTheme', e);
-  }
+  try { const info = await api.getThemeInfo?.(); if (info) applyTheme(info); } catch (e) { logError('initTheme', e); }
+  api.onThemeUpdated?.((info) => applyTheme(info));
 }
 
-function setupThemeListeners() {
-  if (!api.onThemeUpdated) return;
-  api.onThemeUpdated((themeInfo) => applyTheme(themeInfo));
+async function setTheme(source) {
+  settings.theme = source;
+  applyTheme({ source, shouldUseDarkColors: window.matchMedia?.('(prefers-color-scheme: dark)').matches });
+  try { const info = await api.setAppTheme?.(source); if (info) applyTheme(info); } catch (e) { logError('setTheme', e); await saveSetting('theme', source); }
 }
 
-async function setTheme(themeSource) {
-  settings.theme = themeSource;
-  applyTheme({
-    source: themeSource,
-    shouldUseDarkColors: window.matchMedia?.('(prefers-color-scheme: dark)').matches
+// ==========================================================
+// Onboarding
+// ==========================================================
+let obStep = 0;
+let obEngine = 'cloud';
+let obMicStream = null;
+let obMeterTimer = null;
+
+function bindOnboarding() {
+  $$('[data-ob-next]').forEach((b) => b.addEventListener('click', () => obGo(obStep + 1)));
+  $$('[data-ob-back]').forEach((b) => b.addEventListener('click', () => obGo(obStep - 1)));
+  $$('[data-ob-skip]').forEach((b) => b.addEventListener('click', () => obGo(obStep + 1)));
+  $$('#obEngineChoices .choice').forEach((c) => c.addEventListener('click', () => {
+    obEngine = c.dataset.engine;
+    $$('#obEngineChoices .choice').forEach((x) => x.classList.toggle('selected', x === c));
+    renderObEngineForm();
+  }));
+  $('obEngineNext')?.addEventListener('click', obEngineContinue);
+  $('btnFinish')?.addEventListener('click', finishOnboarding);
+  $('obPractice')?.addEventListener('input', (e) => e.target.classList.toggle('got', !!e.target.value.trim()));
+  $('onboardingErrorReporting')?.addEventListener('change', (e) => {
+    saveSetting('errorReporting', e.target.checked);
+    if ($('toggleErrorReporting')) $('toggleErrorReporting').checked = e.target.checked;
   });
+  $('obMic')?.addEventListener('change', (e) => { saveSetting('microphoneId', e.target.value); startObMeter(); });
+}
 
-  // Keep the Settings dropdown in sync with the top-bar toggle
-  const themeSelect = document.getElementById('selectTheme');
-  if (themeSelect) themeSelect.value = themeSource;
+function obGo(step) {
+  step = Math.max(0, Math.min(3, step));
+  const steps = $$('.ob-step');
+  steps.forEach((s) => {
+    const n = Number(s.dataset.step);
+    s.classList.toggle('leaving', n < step);
+    s.classList.toggle('active', n === step);
+  });
+  $$('#obDots i').forEach((d, i) => d.classList.toggle('on', i === step));
+  obStep = step;
+  if (!obOrb && typeof window.createBloomOrb === 'function' && $('obOrb')?.getContext) {
+    try { obOrb = window.createBloomOrb($('obOrb'), { palette: bloomPalette(), scale: 0.26 }); } catch (e) { logError('orb', e); }
+  }
+  obOrb?.setState(step === 3 ? 'done' : 'idle');
+  if (step === 1) renderObEngineForm();
+  if (step === 2) startObMeter(); else stopObMeter();
+  if (step === 3) { renderShortcuts(); $('obPractice')?.focus(); }
+}
 
+function renderObEngineForm() {
+  const host = $('obEngineForm');
+  if (!host) return;
+  host.replaceChildren();
+  if (obEngine === 'cloud') {
+    if (engineState.cloud?.configured) {
+      host.append(h('p.hint', { html: `${icon('check')} Signed in as <b>${escapeHtml(engineState.cloud.username)}</b>.` }));
+      return;
+    }
+    host.append(cloudLoginForm(async () => { renderObEngineForm(); }));
+  } else if (obEngine === 'local') {
+    host.append(localInstallBlock(true));
+  } else {
+    host.append(geminiKeyForm(() => renderObEngineForm()));
+  }
+}
+
+async function obEngineContinue() {
+  await setEngine(obEngine, true);
+  obGo(2);
+}
+
+async function startObMeter() {
+  stopObMeter();
+  await loadMicrophones();
+  const meter = window.FreesiaAudio?.createMeter($('obMeter'), 26);
   try {
-    const themeInfo = await api.setAppTheme?.(themeSource);
-    if (themeInfo) applyTheme(themeInfo);
+    obMicStream = await openMicrophoneStream();
+    const ctx = new AudioContext();
+    const an = ctx.createAnalyser();
+    an.fftSize = 1024;
+    ctx.createMediaStreamSource(obMicStream).connect(an);
+    const buf = new Float32Array(an.fftSize);
+    const m = window.createAudioMeter();
+    obMeterTimer = setInterval(() => {
+      an.getFloatTimeDomainData(buf);
+      const level = m.sample(buf);
+      meter.set(level);
+      obOrb?.setLevel(level);
+      obOrb?.setState(level > 0.05 ? 'listening' : 'idle');
+    }, 50);
+    obMicStream._ctx = ctx;
   } catch (e) {
-    logError('setTheme', e);
-    await saveSetting('theme', themeSource);
+    toast(micErrorMessage(e), 'error');
   }
 }
 
-// Top-bar quick toggle: flips between the two effective appearances and
-// pins an explicit choice (so it no longer follows the system).
-function toggleTheme() {
-  const isDark = document.documentElement.dataset.theme !== 'light';
-  const next = isDark ? 'light' : 'dark';
-  setTheme(next);
-  showToast(next === 'dark' ? '🌙 Dark theme' : '☀️ Light theme', 'info');
-}
-
-async function initAppMetadata() {
-  try {
-    const version = await api.getAppVersion?.();
-    const versionEl = document.getElementById('appVersionLabel');
-    if (versionEl && version) versionEl.textContent = `Version ${version} - MIT License`;
-
-    const updateStatus = await api.getUpdateStatus?.();
-    if (updateStatus) renderUpdateStatus(updateStatus);
-  } catch (e) {
-    logError('initAppMetadata', e);
+function stopObMeter() {
+  clearInterval(obMeterTimer);
+  obMeterTimer = null;
+  if (obMicStream) {
+    obMicStream.getTracks().forEach((t) => t.stop());
+    obMicStream._ctx?.close().catch(() => {});
+    obMicStream = null;
   }
 }
 
-function setupUpdateListeners() {
-  if (!api.onUpdateStatus) return;
-  api.onUpdateStatus((state) => renderUpdateStatus(state));
+async function finishOnboarding() {
+  stopObMeter();
+  await saveSetting('onboarded', true);
+  await saveSetting('seenV3', true);
+  showScreen('screenMain');
+  showView('home');
+  toast('Welcome to Freesia', 'success');
+  homeOrb?.setState('done');
+  setTimeout(() => homeOrb?.setState('idle'), 1400);
 }
 
-function renderUpdateStatus(state = {}) {
-  currentUpdateStatus = state;
-
-  const statusEl = document.getElementById('updateStatusText');
-  const checkBtn = document.getElementById('btnCheckUpdates');
-  const downloadBtn = document.getElementById('btnDownloadUpdate');
-  const installBtn = document.getElementById('btnInstallUpdate');
-  const progressEl = document.getElementById('updateProgress');
-  const progressBar = document.getElementById('updateProgressBar');
-
-  if (statusEl) {
-    statusEl.textContent = state.message || 'Update checks are ready.';
-  }
-
-  const status = state.status || 'idle';
-  const busy = status === 'checking' || status === 'downloading' || status === 'installing';
-  if (checkBtn) checkBtn.disabled = busy;
-  if (downloadBtn) downloadBtn.style.display = status === 'available' ? '' : 'none';
-  if (installBtn) installBtn.style.display = status === 'downloaded' ? '' : 'none';
-  const homeText = document.getElementById('homeUpdateText');
-  const homeButton = document.getElementById('btnHomeUpdate');
-  if (homeText) homeText.textContent = state.message || 'Check for a newer version of Freesia.';
-  if (homeButton) {
-    homeButton.disabled = busy || status === 'disabled';
-    homeButton.textContent = status === 'available' ? 'Download update'
-      : status === 'downloaded' ? 'Restart to update'
-      : status === 'downloading' ? `Downloading ${Math.round(state.progress?.percent || 0)}%`
-      : status === 'installing' ? 'Installing…' : 'Check for updates';
-  }
-
-  const percent = Math.max(0, Math.min(100, Math.round(state.progress?.percent || 0)));
-  if (progressEl && progressBar) {
-    const showProgress = status === 'downloading' || status === 'downloaded';
-    progressEl.style.display = showProgress ? 'block' : 'none';
-    progressBar.style.width = `${status === 'downloaded' ? 100 : percent}%`;
-  }
+// ==========================================================
+// Home
+// ==========================================================
+function bindHome() {
+  $('orbButton')?.addEventListener('click', () => {
+    if (isProcessingAudio) return;
+    if (isRecording || isStartingRecording) stopRecording();
+    else startRecording('test');
+  });
+  $('btnCopyOutput')?.addEventListener('click', async () => {
+    if (!lastOutputText) return;
+    await api.copyText(lastOutputText);
+    toast('Copied', 'success');
+  });
+  $('homeStyleChip')?.addEventListener('click', () => showView('styles'));
+  $('btnReviewRecoveries')?.addEventListener('click', () => showView('history'));
+  $('btnSetupEngine')?.addEventListener('click', () => showView('engines'));
+  $('btnHomeUpdate')?.addEventListener('click', () => {
+    if (updateStatus.status === 'available') return downloadUpdate();
+    if (updateStatus.status === 'downloaded') return installUpdate();
+    return checkForUpdates();
+  });
 }
 
-async function checkForUpdates() {
-  try {
-    renderUpdateStatus({ ...currentUpdateStatus, status: 'checking', message: 'Checking for updates.' });
-    const state = await api.checkForUpdates?.();
-    if (state) renderUpdateStatus(state);
-  } catch (e) {
-    logError('checkForUpdates', e);
-    renderUpdateStatus({ status: 'error', message: e.message || 'Update check failed.' });
-  }
+function renderGreeting() {
+  const hr = new Date().getHours();
+  const part = hr < 5 ? 'Up late' : hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
+  const el = $('homeGreeting');
+  if (el) el.textContent = `${part} · ${new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}`;
 }
 
-async function downloadUpdate() {
-  try {
-    renderUpdateStatus({ ...currentUpdateStatus, status: 'downloading', message: 'Starting update download.' });
-    const state = await api.downloadUpdate?.();
-    if (state) renderUpdateStatus(state);
-  } catch (e) {
-    logError('downloadUpdate', e);
-    renderUpdateStatus({ status: 'error', message: e.message || 'Update download failed.' });
+function setOutput(state, text = '', meta = []) {
+  const out = $('testOutput');
+  if (!out) return;
+  out.classList.toggle('is-error', state === 'error');
+  out.classList.toggle('is-working', state === 'working');
+  if (state === 'text') {
+    lastOutputText = text;
+    revealText(out, text);
+    $('btnCopyOutput').disabled = false;
+  } else if (state === 'working') {
+    out.innerHTML = `<span class="shimmer-text">${escapeHtml(text)}</span>`;
+  } else if (state === 'error') {
+    out.innerHTML = `${escapeHtml(text)}`;
+  } else {
+    out.innerHTML = '<span class="placeholder">Your words will bloom here.</span>';
   }
+  const metaEl = $('outputMeta');
+  if (metaEl) metaEl.innerHTML = meta.map((m) => `<span class="pill-tag ${m.kind || ''}">${escapeHtml(m.text)}</span>`).join('');
 }
 
-async function installUpdate() {
-  if (isRecording || isStartingRecording || isProcessingAudio) {
-    showToast('Finish dictation before restarting to update.', 'info');
-    return;
-  }
-  if (currentUpdateStatus.status !== 'downloaded') return;
-  if (!confirm(`Install Freesia ${currentUpdateStatus.updateInfo?.version || ''} now? The app will close, install quietly, and reopen.`)) return;
-  try {
-    const state = await api.installUpdate?.();
-    if (state) renderUpdateStatus(state);
-  } catch (e) {
-    logError('installUpdate', e);
-    renderUpdateStatus({ status: 'error', message: e.message || 'Update install failed.' });
-  }
+function setOrbCaption(text) {
+  const el = $('orbCaption');
+  if (el) el.textContent = text;
 }
 
-// ============================================
-// Dashboard Stats
-// ============================================
-// Average typing speed used to estimate saved time. Speaking runs at
-// 130+ WPM, so time saved = estimated typing time - actual speaking time.
-const TYPING_WPM = 40;
-
+// ---------------------------------------------------------- stats
 function localDateString(d = new Date()) {
-  // Local calendar date, not UTC — the old toISOString() version rolled
-  // the "day" over at UTC midnight, resetting stats mid-evening in the US.
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
-
-function emptyDayStats(date) {
-  return { date, words: 0, sessions: 0, recordSec: 0, savedSec: 0 };
-}
+function emptyDayStats(date) { return { date, words: 0, sessions: 0, recordSec: 0, savedSec: 0 }; }
 
 function normalizeStats(raw) {
   const today = localDateString();
-  // Fresh install
   if (!raw) {
-    return {
-      today: emptyDayStats(today),
-      lifetime: { words: 0, sessions: 0, recordSec: 0, savedSec: 0 },
-      streak: { current: 0, best: 0, lastDate: '' }
-    };
+    return { today: emptyDayStats(today), lifetime: { words: 0, sessions: 0, recordSec: 0, savedSec: 0 }, streak: { current: 0, best: 0, lastDate: '' }, days: {} };
   }
-  // Migrate the legacy flat shape { wordsToday, timeSaved, sessions, lastDate }
   if (raw.wordsToday !== undefined || !raw.lifetime) {
     const words = raw.wordsToday || 0;
     const sessions = raw.sessions || 0;
     const savedSec = (raw.timeSaved || 0) * 60;
     const isToday = raw.lastDate === today;
     return {
-      today: isToday
-        ? { date: today, words, sessions, recordSec: 0, savedSec }
-        : emptyDayStats(today),
-      // Seed lifetime with whatever the legacy counters held so the
-      // user doesn't start back at zero.
+      today: isToday ? { date: today, words, sessions, recordSec: 0, savedSec } : emptyDayStats(today),
       lifetime: { words, sessions, recordSec: 0, savedSec },
-      streak: { current: raw.lastDate ? 1 : 0, best: raw.lastDate ? 1 : 0, lastDate: raw.lastDate || '' }
+      streak: { current: raw.lastDate ? 1 : 0, best: raw.lastDate ? 1 : 0, lastDate: raw.lastDate || '' },
+      days: raw.lastDate ? { [raw.lastDate]: words } : {}
     };
   }
-  // Current shape: roll the day over without touching lifetime or streak
-  if (raw.today?.date !== today) {
-    raw.today = emptyDayStats(today);
-  }
+  if (raw.today?.date !== today) raw.today = emptyDayStats(today);
+  if (!raw.days) raw.days = {};
+  // A streak survives only if the last dictation was today or yesterday
+  const yesterday = localDateString(new Date(Date.now() - 86400000));
+  if (raw.streak && raw.streak.lastDate && raw.streak.lastDate !== today && raw.streak.lastDate !== yesterday) raw.streak.current = 0;
   return raw;
-}
-
-function formatDuration(totalSec) {
-  const sec = Math.max(0, Math.round(totalSec));
-  if (sec < 60) return `${sec}s`;
-  const h = Math.floor(sec / 3600);
-  const m = Math.round((sec % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
 }
 
 function updateDashboardStats() {
   const stats = normalizeStats(settings.stats);
   settings.stats = stats;
-  saveSetting('stats', stats);
+  countUp($('statWords'), stats.today.words);
+  const t = $('statTime'); if (t) t.textContent = formatDuration(stats.today.savedSec);
+  countUp($('statStreak'), stats.streak.current);
+  countUp($('statSessions'), stats.today.sessions);
+  const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+  set('statWordsAll', `${stats.lifetime.words.toLocaleString()} all time`);
+  set('statTimeAll', `${formatDuration(stats.lifetime.savedSec)} all time`);
+  set('statStreakBest', `best ${stats.streak.best}`);
+  set('statAvg', `${stats.lifetime.sessions ? Math.round(stats.lifetime.words / stats.lifetime.sessions) : 0} words avg`);
+  renderActivity(stats);
+}
 
-  const set = (id, value) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = value;
-  };
-
-  set('statWords', stats.today.words.toLocaleString());
-  set('statTime', formatDuration(stats.today.savedSec));
-  set('statSessions', String(stats.today.sessions));
-  set('statStreak', String(stats.streak.current));
-
-  set('statWordsAll', stats.lifetime.words.toLocaleString());
-  set('statTimeAll', formatDuration(stats.lifetime.savedSec));
-  set('statSessionsAll', String(stats.lifetime.sessions));
-  const avg = stats.lifetime.sessions > 0
-    ? Math.round(stats.lifetime.words / stats.lifetime.sessions)
-    : 0;
-  set('statAvg', String(avg));
+function renderActivity(stats) {
+  const host = $('activity');
+  if (!host) return;
+  const days = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000);
+    const key = localDateString(d);
+    days.push({ key, d, words: stats.days?.[key] || (key === stats.today.date ? stats.today.words : 0) });
+  }
+  const max = Math.max(1, ...days.map((d) => d.words));
+  host.replaceChildren(...days.map((d, i) => {
+    const bar = h('span.activity-bar', {
+      class: `activity-bar${d.words ? ' has' : ''}${i === 29 ? ' today' : ''}`,
+      'data-tip': `${d.d.toLocaleDateString([], { month: 'short', day: 'numeric' })} · ${d.words.toLocaleString()} words`
+    });
+    requestAnimationFrame(() => setTimeout(() => { bar.style.height = `${d.words ? Math.max(8, (d.words / max) * 100) : 5}%`; }, i * 14));
+    return bar;
+  }));
+  const total = days.reduce((s, d) => s + d.words, 0);
+  const tot = $('activityTotal'); if (tot) tot.textContent = `${total.toLocaleString()} words`;
+  const start = $('activityStart'); if (start) start.textContent = days[0].d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 async function incrementStats(wordCount, recordSeconds = 0) {
   const stats = normalizeStats(settings.stats);
   const today = localDateString();
-
-  // Exact seconds, no per-session rounding: a 15-word dictation used to
-  // contribute Math.round(15/40) = 0 minutes forever.
-  const typingSec = (wordCount / TYPING_WPM) * 60;
-  const savedSec = Math.max(0, typingSec - recordSeconds);
-
-  stats.today.words += wordCount;
-  stats.today.sessions += 1;
-  stats.today.recordSec += recordSeconds;
-  stats.today.savedSec += savedSec;
-
-  stats.lifetime.words += wordCount;
-  stats.lifetime.sessions += 1;
-  stats.lifetime.recordSec += recordSeconds;
-  stats.lifetime.savedSec += savedSec;
-
-  // Streak: consecutive calendar days with at least one dictation
+  const savedSec = Math.max(0, (wordCount / TYPING_WPM) * 60 - recordSeconds);
+  for (const bucket of [stats.today, stats.lifetime]) {
+    bucket.words += wordCount; bucket.sessions += 1; bucket.recordSec += recordSeconds; bucket.savedSec += savedSec;
+  }
+  stats.days[today] = (stats.days[today] || 0) + wordCount;
+  const keys = Object.keys(stats.days).sort();
+  while (keys.length > 90) delete stats.days[keys.shift()];
   if (stats.streak.lastDate !== today) {
     const yesterday = localDateString(new Date(Date.now() - 86400000));
     stats.streak.current = stats.streak.lastDate === yesterday ? stats.streak.current + 1 : 1;
     stats.streak.best = Math.max(stats.streak.best, stats.streak.current);
     stats.streak.lastDate = today;
   }
-
   await saveSetting('stats', stats);
-  settings.stats = stats;
   updateDashboardStats();
 }
 
-// ============================================
-// Dictionary
-// ============================================
-async function addWord() {
-  const input = document.getElementById('newWordInput');
-  const word = input.value.trim();
-  if (!word) return;
-  const dict = settings.dictionary || [];
-  if (!dict.includes(word)) {
-    dict.push(word);
-    await saveSetting('dictionary', dict);
-    settings.dictionary = dict;
-    renderDictionary();
-    showToast(`Added "${word}" to dictionary`, 'success');
-  }
-  input.value = '';
-  document.getElementById('dictionaryInput').style.display = 'none';
-}
-
-async function removeWord(word) {
-  const dict = (settings.dictionary || []).filter(w => w !== word);
-  await saveSetting('dictionary', dict);
-  settings.dictionary = dict;
-  renderDictionary();
-}
-
-function renderDictionary() {
-  const list = document.getElementById('dictionaryList');
-  if (!list) return;
-  const dict = settings.dictionary || [];
-  if (dict.length === 0) {
-    list.innerHTML = `<div class="empty-state"><div class="empty-icon">📖</div><p>No words added yet</p><p class="text-sm text-secondary">Add custom words to improve accuracy</p></div>`;
-    return;
-  }
-  list.innerHTML = dict.map(word => `
-    <div class="tag" style="margin: 4px;">
-      ${escapeHtml(word)}
-      <span class="tag-remove" onclick="removeWord('${escapeHtml(word)}')" title="Remove">✕</span>
-    </div>
-  `).join('');
-}
-
-// ============================================
-// Snippets
-// ============================================
-let currentEditSnippetId = null;
-
-async function saveSnippet() {
-  const trigger = document.getElementById('snippetTrigger').value.trim();
-  const expansion = document.getElementById('snippetExpansion').value.trim();
-  if (!trigger || !expansion) return showToast('Fill in both fields', 'error');
-  
-  const snippets = settings.snippets || [];
-  
-  if (currentEditSnippetId) {
-    const idx = snippets.findIndex(s => s.id === currentEditSnippetId);
-    if (idx !== -1) {
-      snippets[idx].trigger = trigger;
-      snippets[idx].expansion = expansion;
-    }
-    currentEditSnippetId = null;
-  } else {
-    snippets.push({ trigger, expansion, id: Date.now() });
-  }
-  
-  await saveSetting('snippets', snippets);
-  settings.snippets = snippets;
-  renderSnippets();
-  document.getElementById('snippetTrigger').value = '';
-  document.getElementById('snippetExpansion').value = '';
-  document.getElementById('snippetForm').style.display = 'none';
-  showToast(`Snippet "${trigger}" saved`, 'success');
-}
-
-function editSnippet(id) {
-  const snippets = settings.snippets || [];
-  const s = snippets.find(s => s.id === id);
-  if (!s) return;
-  
-  currentEditSnippetId = id;
-  document.getElementById('snippetTrigger').value = s.trigger;
-  document.getElementById('snippetExpansion').value = s.expansion;
-  document.getElementById('snippetForm').style.display = 'block';
-  document.getElementById('snippetTrigger').focus();
-}
-
-async function removeSnippet(id) {
-  const snippets = (settings.snippets || []).filter(s => s.id !== id);
-  await saveSetting('snippets', snippets);
-  settings.snippets = snippets;
-  renderSnippets();
-}
-
-function renderSnippets() {
-  const list = document.getElementById('snippetList');
-  if (!list) return;
-  const snippets = settings.snippets || [];
-  if (snippets.length === 0) {
-    list.innerHTML = `<div class="empty-state"><div class="empty-icon">⚡</div><p>No snippets yet</p><p class="text-sm text-secondary">Create shortcuts for text you use often</p></div>`;
-    return;
-  }
-  list.innerHTML = snippets.map(s => `
-    <div class="snippet-item glass-card">
-      <div class="snippet-trigger-label">"${escapeHtml(s.trigger)}"</div>
-      <div class="snippet-expansion-text text-secondary text-sm">${escapeHtml(s.expansion)}</div>
-      <div class="snippet-actions" style="display: flex; gap: 8px;">
-        <button class="btn btn-secondary btn-sm" onclick="editSnippet(${s.id})">Edit</button>
-        <button class="btn btn-danger btn-sm snippet-delete" onclick="removeSnippet(${s.id})">Remove</button>
-      </div>
-    </div>
-  `).join('');
-}
-
-// ============================================
-// History
-// ============================================
-async function addToHistory(text, mode) {
-  const history = settings.history || [];
-  history.unshift({
-    text,
-    mode,
-    timestamp: new Date().toISOString(),
-    id: Date.now()
-  });
-  if (history.length > 100) history.pop();
-  await saveSetting('history', history);
-  settings.history = history;
-  renderHistory();
-}
-
-function renderHistory() {
-  const list = document.getElementById('historyList');
-  if (!list) return;
-  const history = settings.history || [];
-  if (history.length === 0) {
-    list.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><p>No history yet</p><p class="text-sm text-secondary">Your transcriptions will appear here</p></div>`;
-    return;
-  }
-  list.innerHTML = history.map(h => {
-    const date = new Date(h.timestamp);
-    const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const id = String(h.id || '');
-    return `
-      <div class="history-item glass-card">
-        <div class="history-meta">
-          <span class="tag">${h.mode === 'command' ? '✨ Command' : '🎤 Dictation'}</span>
-          <div class="history-actions">
-            <span class="text-muted text-sm">${time}</span>
-            <button class="btn btn-ghost btn-sm history-copy-btn" onclick="copyHistoryItem('${escapeHtml(id)}')" title="Copy text">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-              Copy
-            </button>
-          </div>
-        </div>
-        <div class="history-text">${escapeHtml(h.text)}</div>
-      </div>
-    `;
-  }).join('');
-}
-
-async function copyHistoryItem(id) {
-  const item = (settings.history || []).find(h => String(h.id) === String(id));
-  if (!item) return;
-
-  try {
-    await api.copyText(item.text);
-    showToast('Copied to clipboard', 'success');
-  } catch (e) {
-    logError('copyHistoryItem', e);
-    showToast('Copy failed', 'error');
-  }
-}
-
-// ============================================
-// Audio & Dictation
-// ============================================
+// ==========================================================
+// Microphone
+// ==========================================================
 function buildAudioConstraints(deviceId) {
-  return deviceId ? { deviceId: { exact: deviceId } } : true;
+  const base = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  return deviceId ? { ...base, deviceId: { exact: deviceId } } : base;
 }
 
 async function loadMicrophones() {
-  const select = document.getElementById('selectMicrophone');
-  if (!select || !navigator.mediaDevices?.enumerateDevices) return;
-
+  const selects = [$('selectMicrophone'), $('obMic')].filter(Boolean);
+  if (!selects.length || !navigator.mediaDevices?.enumerateDevices) return;
   try {
-    const devices = (await navigator.mediaDevices.enumerateDevices())
-      .filter(device => device.kind === 'audioinput');
+    const devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput' && d.deviceId !== 'default' && d.deviceId !== 'communications');
     const selectedId = settings.microphoneId || '';
-    const selectedIsAvailable = !selectedId || devices.some(device => device.deviceId === selectedId);
-    select.replaceChildren();
-    select.add(new Option('System default', ''));
-    devices.forEach((device, index) => {
-      const label = device.label || `Microphone ${index + 1}`;
-      select.add(new Option(label, device.deviceId));
-    });
-    if (!selectedIsAvailable) {
-      select.add(new Option('Previously selected microphone (unavailable)', selectedId));
+    const available = !selectedId || devices.some((d) => d.deviceId === selectedId);
+    for (const select of selects) {
+      select.replaceChildren(new Option('Windows default', ''));
+      devices.forEach((d, i) => select.add(new Option(d.label || `Microphone ${i + 1}`, d.deviceId)));
+      if (!available) select.add(new Option('Previous microphone (unplugged)', selectedId));
+      select.value = selectedId;
     }
-    select.value = selectedId;
   } catch (e) {
     logError('loadMicrophones', e);
   }
@@ -1160,130 +492,149 @@ async function openMicrophoneStream() {
   try {
     return await navigator.mediaDevices.getUserMedia({ audio: buildAudioConstraints(selectedId) });
   } catch (e) {
-    const deviceUnavailable = selectedId && ['NotFoundError', 'OverconstrainedError'].includes(e?.name);
-    if (!deviceUnavailable) throw e;
-
-    // A Bluetooth/USB input may disappear between launches. Keep dictation
-    // working with the system default and make that fallback visible in Settings.
+    const unavailable = selectedId && ['NotFoundError', 'OverconstrainedError'].includes(e?.name);
+    if (!unavailable) throw e;
     await saveSetting('microphoneId', '');
-    const select = document.getElementById('selectMicrophone');
-    if (select) select.value = '';
-    showToast('Selected microphone is unavailable. Using the system default.', 'info');
-    return navigator.mediaDevices.getUserMedia({ audio: true });
+    loadMicrophones();
+    toast('Your selected microphone is unplugged. Using the Windows default.', 'info');
+    return navigator.mediaDevices.getUserMedia({ audio: buildAudioConstraints('') });
   }
 }
 
-async function toggleMicTest() {
-  if (isRecording || isStartingRecording) {
-    stopRecording();
-  } else {
-    await startRecording();
-  }
+function micErrorMessage(e) {
+  if (e?.name === 'NotFoundError') return 'No microphone found. Plug one in and try again.';
+  if (e?.name === 'NotAllowedError') return 'Microphone access is blocked. Allow it in Windows Settings → Privacy → Microphone.';
+  if (e?.name === 'NotReadableError') return 'Another app is using the microphone exclusively.';
+  return 'Could not start the microphone.';
 }
 
-async function startRecording(mode = 'dictate') {
+// ==========================================================
+// Recording
+// ==========================================================
+function startTimer() {
+  recordingStartTime = Date.now();
+  const el = $('recordingTime');
+  if (el) el.textContent = '0:00';
+  recordingTimer = setInterval(() => {
+    const t = clock((Date.now() - recordingStartTime) / 1000);
+    if (el) el.textContent = t;
+    api.overlayTimer?.(t);
+  }, 250);
+}
+function stopTimer() { clearInterval(recordingTimer); recordingTimer = null; }
+function recordingSeconds() { return recordingStartTime ? Math.max(0, (Date.now() - recordingStartTime) / 1000) : 0; }
+
+let pendingSelection = '';
+
+async function startRecording(mode = 'dictate-inject', { selection = '' } = {}) {
   if (isProcessingAudio || isRecording || isStartingRecording || isStoppingRecording) return;
   mediaRecorder = null;
   isStartingRecording = true;
+  pendingSelection = selection;
   api.recordingState?.('recording');
   const session = ++recordingSession;
   let stream;
   try {
-    // Acquire the microphone immediately; foreground detection can finish in parallel.
-    const styleReady = detectAndApplyAutoStyle();
+    const styleReady = mode === 'test' ? Promise.resolve() : detectAndApplyAutoStyle();
     stream = await openMicrophoneStream();
-    if (session !== recordingSession) { stream.getTracks().forEach(t => t.stop()); return; }
+    if (session !== recordingSession) { stream.getTracks().forEach((t) => t.stop()); return; }
     isRecording = true;
-    // Permission unlocks human-readable device labels in Chromium.
+    document.body.classList.add('is-recording');
     loadMicrophones();
+    if (settings.sounds !== false) window.FreesiaAudio?.chime('start');
+    startTimer();
+    homeOrb?.setState('listening');
+    setOrbCaption(mode === 'test' ? 'Listening… tap to finish' : mode === 'command' ? 'Listening for your edit…' : 'Listening… press the shortcut again to finish');
+    const icn = $('orbIcon'); if (icn) icn.innerHTML = '<use href="#i-stop"/>';
 
-    // Visual feedback
-    const btn = document.getElementById('btnMicTest');
-    if (btn) btn.classList.add('recording');
-
-    // Start recording timer
-    startRecordingTimer();
-
-    // Set up audio analysis for waveform
     audioContext = new AudioContext();
-    const source = audioContext.createMediaStreamSource(stream);
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 2048;
-    source.connect(analyser);
+    audioContext.createMediaStreamSource(stream).connect(analyser);
     await audioContext.resume();
-    if (session !== recordingSession) { stream.getTracks().forEach(t => t.stop()); return; }
-    drawWaveform();
+    if (session !== recordingSession) { stream.getTracks().forEach((t) => t.stop()); return; }
+    runMeter();
 
-    // Set up recording — use timeslice to capture data periodically for long recordings
-    const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm', audioBitsPerSecond: 64000 });
+    const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 64000 });
     mediaRecorder = recorder;
-    audioChunks = [];
-
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) audioChunks.push(e.data);
-    };
-
-    mediaRecorder.onstop = async () => {
-      stream.getTracks().forEach(t => t.stop());
-      clearTimeout(animFrameId);
+    const chunks = [];
+    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+    recorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      clearInterval(meterTimer);
       api.overlayAudioLevel?.(0);
-      clearWaveform();
-      const btn = document.getElementById('btnMicTest');
-      if (btn) btn.classList.remove('recording');
-      stopRecordingTimer();
-
-      const chunks = audioChunks;
-      audioChunks = [];
+      stopTimer();
+      document.body.classList.remove('is-recording');
+      const icn2 = $('orbIcon'); if (icn2) icn2.innerHTML = '<use href="#i-mic"/>';
       try {
         if (recorder.discard || !chunks.length) {
           api.recordingState?.('idle');
           api.overlayHide?.();
-          hideRecordingTimer();
+          homeOrb?.setState('idle');
+          setOrbCaption('Tap the bloom to try it here');
           return;
         }
+        if (settings.sounds !== false) window.FreesiaAudio?.chime('stop');
         await styleReady;
-        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
-        await processAudio(audioBlob, mode);
+        await processAudio(new Blob(chunks, { type: 'audio/webm' }), mode, { selection: pendingSelection, durationSec: recordingSeconds() });
       } catch (error) {
         logError('recording:stop', error);
-        api.recordingFailed?.();
-      } finally { isStoppingRecording = false; }
+        api.recordingFailed?.('Something went wrong');
+      } finally {
+        isStoppingRecording = false;
+        recordingStartTime = null;
+      }
     };
-
-    // Use 10s timeslice so data is captured incrementally (prevents data loss on crash)
-    mediaRecorder.start(10000);
+    // 1 s slices: a crash loses at most a second of audio
+    recorder.start(1000);
     stream.getAudioTracks()[0]?.addEventListener('ended', () => {
       if (!isRecording) return;
-      showToast('Microphone disconnected. Processing the audio captured so far.', 'info');
+      toast('Microphone disconnected. Transcribing what was captured.', 'info');
       stopRecording();
     });
-    showToast('🎤 Recording... Click again to stop', 'info');
   } catch (e) {
-    stream?.getTracks().forEach(t => t.stop());
+    stream?.getTracks().forEach((t) => t.stop());
     if (session !== recordingSession) return;
-    clearTimeout(animFrameId);
-    if (audioContext) { audioContext.close().catch(() => {}); audioContext = null; }
+    clearInterval(meterTimer);
+    audioContext?.close().catch(() => {});
+    audioContext = null;
     analyser = null;
-    clearWaveform();
-    document.getElementById('btnMicTest')?.classList.remove('recording');
+    document.body.classList.remove('is-recording');
+    homeOrb?.setState('error');
+    setTimeout(() => homeOrb?.setState('idle'), 1200);
     api.overlayAudioLevel?.(0);
     logError('startRecording', e);
-    showToast(e.name === 'NotFoundError' ? 'No microphone found. Connect an input device and try again.'
-      : e.name === 'NotAllowedError' ? 'Allow microphone access in Windows privacy settings.'
-      : 'Could not start the microphone. Check the selected device and try again.', 'error');
-    hideRecordingTimer();
+    const msg = micErrorMessage(e);
+    toast(msg, 'error');
+    setOrbCaption(msg);
+    stopTimer();
     isRecording = false;
-    // Tell the main process the recording never started so the global
-    // shortcut state machine doesn't get stuck in "recording".
-    api.recordingFailed?.();
-  } finally { if (session === recordingSession) isStartingRecording = false; }
+    if (settings.sounds !== false) window.FreesiaAudio?.chime('error');
+    api.recordingFailed?.(msg);
+  } finally {
+    if (session === recordingSession) isStartingRecording = false;
+  }
+}
+
+function runMeter() {
+  const buf = new Float32Array(analyser.fftSize);
+  const meter = window.createAudioMeter();
+  clearInterval(meterTimer);
+  meterTimer = setInterval(() => {
+    if (!analyser) return;
+    analyser.getFloatTimeDomainData(buf);
+    const level = meter.sample(buf);
+    homeOrb?.setLevel(level);
+    const now = performance.now();
+    if (now - lastOverlayLevelAt >= 35) { api.overlayAudioLevel?.(level); lastOverlayLevelAt = now; }
+  }, 33);
 }
 
 function stopRecording(discard = false) {
   ++recordingSession;
   isStartingRecording = false;
   isRecording = false;
-  clearTimeout(animFrameId);
+  clearInterval(meterTimer);
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     isStoppingRecording = true;
     mediaRecorder.discard = discard;
@@ -1292,928 +643,1365 @@ function stopRecording(discard = false) {
   } else {
     api.recordingState?.('idle');
     api.overlayHide?.();
-    hideRecordingTimer();
-    document.getElementById('btnMicTest')?.classList.remove('recording');
-    clearWaveform();
+    stopTimer();
+    document.body.classList.remove('is-recording');
+    homeOrb?.setState('idle');
   }
-  if (audioContext) {
-    audioContext.close().catch(() => {});
-    audioContext = null;
-  }
+  audioContext?.close().catch(() => {});
+  audioContext = null;
   analyser = null;
   api.overlayAudioLevel?.(0);
-  // Timer continues until processAudio finishes
 }
 
-async function processAudio(audioBlob, mode, existingBase = null) {
+// ==========================================================
+// Transcription pipeline
+// ==========================================================
+function isEngineReady(id, state = engineState) {
+  if (id === 'cloud') return !!state.cloud?.configured;
+  if (id === 'local') return !!state.local?.configured;
+  if (id === 'gemini') return !!state.gemini?.configured;
+  return false;
+}
+
+// Primary engine first; then, if allowed, every other engine that is set up.
+function engineOrder(state = engineState, fallback = settings.engineFallback !== false) {
+  const primary = state.engine || 'cloud';
+  const order = [primary];
+  if (fallback) for (const id of FALLBACK_ORDER) if (id !== primary && isEngineReady(id, state)) order.push(id);
+  return order;
+}
+
+function pickFormatter(state = engineState) {
+  const f = state.formatter || 'auto';
+  if (f === 'off') return null;
+  if (f === 'cloud') return isEngineReady('cloud', state) ? 'cloud' : null;
+  if (f === 'gemini') return isEngineReady('gemini', state) ? 'gemini' : null;
+  return isEngineReady('cloud', state) ? 'cloud' : isEngineReady('gemini', state) ? 'gemini' : null;
+}
+
+function spokenLanguage(style = getActiveStyle()) {
+  if (style.id === 'native') return settings.nativeLanguage || style.language || 'fa';
+  return settings.language || 'auto';
+}
+
+function languageName(code) {
+  return (LANGUAGES.find(([c]) => c === code)?.[1] || code).replace(/\s*\(.*\)$/, '');
+}
+
+function geminiInstruction(style = getActiveStyle()) {
+  const lang = spokenLanguage(style);
+  if (style.id === 'native') {
+    return `The user is speaking ${languageName(lang)}. Transcribe their speech and translate it into fluent, natural English. Do NOT drop any meaning. Do NOT summarize. Return ONLY the English translation.`;
+  }
+  const words = (settings.dictionary || []).join(', ');
+  return `Transcribe this audio exactly${lang !== 'auto' ? ` (language: ${languageName(lang)})` : ''}.${words ? ` These names and terms may appear: ${words}.` : ''} Return ONLY the transcribed text.`;
+}
+
+async function processAudio(audioBlob, mode, { existingBase = null, selection = '', durationSec = 0 } = {}) {
   if (isProcessingAudio) return;
   isProcessingAudio = true;
   api.recordingState?.('processing');
-  const outputEl = document.getElementById('testOutput');
-  const duration = getRecordingDuration();
-  if (outputEl) outputEl.innerHTML = `<span class="spinner"></span> Saving recording...`;
+  homeOrb?.setState('processing');
+  setOrbCaption('Transcribing…');
+  setOutput('working', 'Saving your recording…');
+  const style = getActiveStyle();
+  const audio = await audioBlob.arrayBuffer();
+  const sizeMB = (audio.byteLength / 1048576).toFixed(1);
+  const duration = durationSec ? clock(durationSec) : '';
 
-  let base64Audio = null;
-  let audioSizeMB = '0';
-  let savedBaseName = existingBase;
-
-  // ── STEP 1: Encode audio ──
+  // 1. Save first so nothing is ever lost
+  let savedBase = existingBase;
   try {
-    const arrayBuffer = await audioBlob.arrayBuffer();
-    base64Audio = arrayBufferToBase64(arrayBuffer);
-    audioSizeMB = (arrayBuffer.byteLength / (1024 * 1024)).toFixed(1);
+    savedBase = await api.saveFailedAudio(existingBase ? null : audio, {
+      timestamp: new Date().toISOString(), mode, sizeMB, duration, durationSec, error: 'Pending transcription', style: style.id
+    }, existingBase);
   } catch (e) {
-    logError('processAudio:encode', e);
-    if (outputEl) outputEl.innerHTML = `<span style="color: var(--accent-warning)">Error encoding audio: ${escapeHtml(e.message)}</span>`;
-    isProcessingAudio = false;
-    hideRecordingTimer();
-    api.overlayError();
+    logError('processAudio:safetySave', e);
+  }
+
+  // 2. Transcribe, falling back between engines
+  const order = engineOrder();
+  let result = null;
+  const failures = [];
+  let wavCache = null;
+  for (const id of order) {
+    if (!isEngineReady(id)) { failures.push({ engine: id, code: 'config', message: `${ENGINE_LABELS[id]} is not set up` }); continue; }
+    setOutput('working', `Transcribing${duration ? ` ${duration}` : ''} with ${ENGINE_LABELS[id]}…`);
+    api.overlayProgress?.({ label: ENGINE_LABELS[id] });
+    try {
+      const payload = { engine: id, audio, mime: 'audio/webm', language: spokenLanguage(style), prompt: (settings.dictionary || []).join(', '), durationSec };
+      if (id === 'local') {
+        wavCache = wavCache || await window.FreesiaAudio.toWav16k(audioBlob);
+        payload.wav = wavCache.wav;
+        payload.durationSec = wavCache.durationSec;
+      }
+      if (id === 'gemini') payload.instruction = geminiInstruction(style);
+      const res = await api.transcribe(payload);
+      if (res?.error) { failures.push({ engine: id, ...res.error }); if (res.error.code === 'audio') break; continue; }
+      result = res;
+      break;
+    } catch (e) {
+      failures.push({ engine: id, code: 'audio', message: e.message });
+      logError(`processAudio:${id}`, e);
+    }
+  }
+
+  if (!result) {
+    const last = failures.filter((f) => f.code !== 'config').pop() || failures[0] || { message: 'No engine is set up' };
+    const summary = failures.map((f) => `${ENGINE_LABELS[f.engine] || f.engine}: ${f.message}`).join(' · ');
+    if (savedBase) {
+      try {
+        await api.saveFailedAudio(null, { timestamp: new Date().toISOString(), mode, sizeMB, duration, durationSec, error: summary, style: style.id }, savedBase);
+      } catch { /* already saved */ }
+    }
+    logError('processAudio', new Error(summary));
+    finishWithError(last.code === 'config' && failures.every((f) => f.code === 'config')
+      ? 'Set up a transcription engine first.'
+      : `${last.message}${savedBase ? ' Your recording is saved in History.' : ''}`, last.code === 'config');
+    loadFailedRecordings();
     return;
   }
 
-  // ── STEP 2: Save to disk FIRST (safety net — never lose audio) ──
+  const raw = applyVocabulary(String(result.text || '').trim());
+  if (!raw) {
+    if (savedBase) {
+      if (durationSec && durationSec < 4) await api.deleteFailedRecording(savedBase).catch(() => {});
+      else await api.saveFailedAudio(null, { timestamp: new Date().toISOString(), mode, sizeMB, duration, durationSec, error: 'No speech detected', style: style.id }, savedBase).catch(() => {});
+    }
+    finishWithError('No speech detected. Try again a little closer to the mic.');
+    loadFailedRecordings();
+    return;
+  }
+
+  // 3. Format with the chosen style
+  setOutput('working', 'Shaping your words…');
+  api.overlayProgress?.({ label: 'Formatting' });
+  const formatted = await formatText(raw, mode, { selection, engineUsed: result.engine });
+  // Second pass: the formatter may reintroduce a spelling the speech model produced
+  const finalText = applyVocabulary(formatted.text);
+
+  // 4. Deliver
+  let delivered = 'shown';
+  if (mode === 'dictate-inject' || mode === 'command') {
+    const ok = await api.injectText(finalText);
+    delivered = ok === false ? 'clipboard' : 'typed';
+    if (ok === false) toast('Could not type into that app. The text is on your clipboard: press Ctrl+V.', 'error', 5000);
+  } else if (mode === 'retry') {
+    await api.copyText(finalText);
+    delivered = 'clipboard';
+  }
+
+  const words = finalText.split(/\s+/).filter(Boolean).length;
+  setOutput('text', finalText, [
+    { text: ENGINE_LABELS[result.engine] || result.engine },
+    result.model ? { text: result.model } : null,
+    duration ? { text: duration } : null,
+    { text: `${words} words` },
+    formatted.formatter ? { text: `${style.icon} ${style.name}` } : null,
+    delivered === 'clipboard' ? { text: 'On clipboard', kind: 'warn' } : null,
+    order[0] !== result.engine ? { text: 'Fallback', kind: 'warn' } : null
+  ].filter(Boolean));
+
   try {
-    savedBaseName = await api.saveFailedAudio(existingBase ? null : base64Audio, {
-      timestamp: new Date().toISOString(),
-      mode,
-      sizeMB: audioSizeMB,
-      duration,
-      error: 'Pending transcription',
-      style: activeStyleId
-    }, existingBase);
-    void loadFailedRecordings();
-  } catch (saveErr) {
-    logError('processAudio:safetySave', saveErr);
-    // Continue anyway — transcription might still work
+    await incrementStats(words, durationSec);
+    await addToHistory({ text: finalText, mode, engine: result.engine, durationSec, words, style: style.id });
+  } catch (e) {
+    logError('processAudio:history', e);
   }
 
-  if (outputEl) outputEl.innerHTML = `<span class="spinner"></span> Transcribing ${duration} of audio...`;
-
-  // ── STEP 3: Attempt transcription, rotating to stable fallback models ──
-  // The user's selected model is tried first; if it keeps failing (a preview
-  // model returning HTTP 500 "Internal error encountered." is the common case),
-  // later attempts fall back to known-reliable models instead of hammering the
-  // same broken one.
-  const primaryModel = getSelectedModel();
-  const transcribeModels = buildTranscribeModels(primaryModel);
-  const MAX_RETRIES = transcribeModels.length - 1;
-  const RETRY_DELAYS = [250, 500, 1000];
-  const attemptedModels = [];
-  let lastError = null;
-  let success = false;
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const model = transcribeModels[Math.min(attempt, transcribeModels.length - 1)];
-    attemptedModels.push(model);
-    try {
-      if (attempt > 0) {
-        const delay = RETRY_DELAYS[attempt - 1] || 8000;
-        if (outputEl) outputEl.innerHTML = `<span class="spinner"></span> Retrying with ${escapeHtml(model)}…`;
-        showToast(`Retrying transcription with ${model}…`, 'info');
-        await new Promise(r => setTimeout(r, delay));
-      }
-
-      const transcriptResponse = await fetchJsonWithTimeout(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${settings.apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { inlineData: { mimeType: 'audio/webm', data: base64Audio } },
-                { text: (() => {
-                    const style = getActiveStyle();
-                    const lang = (style.id === 'native' && style.language)
-                      ? (settings.nativeLanguage || style.language)
-                      : (settings.language || 'en');
-                    const langName = style.languageOptions?.find(l => l.code === lang)?.name || lang;
-                    if (style.id === 'native') {
-                      return `The user is speaking in ${langName}. Transcribe their speech and translate it into fluent, natural English. Do NOT drop any meaning. Do NOT summarize. Preserve every idea and detail. Return ONLY the English translation, nothing else.`;
-                    }
-                    return `Transcribe this audio exactly. Language: ${lang}. Return ONLY the transcribed text, nothing else.`;
-                  })() }
-              ]
-            }]
-          })
-        }
-      );
-
-      if (!transcriptResponse.ok) {
-        const err = transcriptResponse.data;
-        const apiMsg = err.error?.message || `HTTP ${transcriptResponse.status}`;
-        // Include model + status + audio size so error reports are actionable
-        const detailed = new Error(`${apiMsg} [model=${model}, http=${transcriptResponse.status}, audio=${audioSizeMB}MB]`);
-        detailed.httpStatus = transcriptResponse.status;
-        throw detailed;
-      }
-
-      const rawText = responseText(transcriptResponse.data);
-      modelCooldowns.delete(model);
-
-      if (!rawText) {
-        if (outputEl) outputEl.innerHTML = '<span class="text-muted">No speech detected. Try again.</span>';
-        // Keep the saved file — user might want to retry manually
-        hideRecordingTimer();
-        api.overlayError();
-        isProcessingAudio = false;
-        return;
-      }
-
-      let finalText = rawText;
-      if (settings.aiFormatting !== false || anyToolEnabled()) {
-        // Snippet expansion and the opt-in tools are handled inside the AI
-        // prompt so the model can judge intent and apply spelling/emoji/polish.
-        finalText = await formatWithAI(rawText, mode, model);
-      } else {
-        // No AI available: conservative word-boundary expansion on the
-        // raw transcript only.
-        finalText = expandSnippets(finalText);
-      }
-
-      if (outputEl) {
-        outputEl.innerHTML = `<span class="transcribed-text">${escapeHtml(finalText)}</span>`;
-        outputEl.style.animation = 'fadeInUp 0.3s ease forwards';
-      }
-
-      if (mode === 'dictate-inject' || mode === 'command') {
-        const injected = await api.injectText(finalText);
-        if (injected === false) {
-          showToast('Couldn\'t type into the app — text is in your clipboard, press Ctrl+V', 'error');
-        }
-      }
-
-      const wordCount = finalText.split(/\s+/).filter(Boolean).length;
-      try {
-        await incrementStats(wordCount, getRecordingSeconds());
-        await addToHistory(finalText, mode);
-      } catch (error) {
-        // A local history failure must never repeat transcription or paste.
-        logError('processAudio:history', error);
-        showToast('Text is ready, but history could not be saved.', 'info');
-      }
-
-      // ── SUCCESS: Delete or keep the safety-saved file based on setting ──
-      if (savedBaseName && !settings.keepSuccessRecordings) {
-        try {
-          await api.deleteFailedRecording(savedBaseName);
-          await loadFailedRecordings();
-        } catch (e) { /* non-critical */ }
-      } else if (savedBaseName) {
-        // Update metadata to mark as successful
-        try {
-          await api.saveFailedAudio(null, {
-            timestamp: new Date().toISOString(),
-            mode,
-            sizeMB: audioSizeMB,
-            duration,
-            error: null,
-            status: 'success',
-            transcription: finalText.substring(0, 200),
-            style: activeStyleId
-          }, savedBaseName);
-          await loadFailedRecordings();
-        } catch (e) { /* non-critical */ }
-      }
-
-      hideRecordingTimer();
-      api.overlayDone();
-      showToast(`✅ ${wordCount} words transcribed (${duration}, ${audioSizeMB} MB)`, 'success');
-      success = true;
-      break;
-
-    } catch (e) {
-      lastError = e;
-      if (e.httpStatus === 404 || e.httpStatus >= 500 || /timed out/i.test(e.message)) {
-        modelCooldowns.set(model, Date.now() + (e.httpStatus === 404 ? 3600000 : 120000));
-      }
-      logError(`processAudio (attempt ${attempt + 1}/${MAX_RETRIES + 1}, model ${model})`, e);
-      const msg = (e.message || '').toLowerCase();
-      // Stop early only on errors that no model switch or retry can fix.
-      // Server errors (5xx / "internal error") fall through so the next
-      // attempt tries a different, more reliable model.
-      if ([400, 401, 403, 429].includes(e.httpStatus) || ['api key', 'api_key', 'quota', 'invalid argument'].some(t => msg.includes(t))) break;
-      if (attempt < MAX_RETRIES) {
-        showToast(`Transcription failed, trying another model…`, 'error');
-      }
-    }
+  if (savedBase && !settings.keepSuccessRecordings) {
+    await api.deleteFailedRecording(savedBase).catch(() => {});
+  } else if (savedBase) {
+    await api.saveFailedAudio(null, { timestamp: new Date().toISOString(), mode, sizeMB, duration, durationSec, error: null, status: 'success', transcription: finalText.slice(0, 200), style: style.id }, savedBase).catch(() => {});
   }
+  loadFailedRecordings();
 
-  if (!success) {
-    const failureSummary = summarizeTranscriptionFailure(lastError, primaryModel, attemptedModels);
-    // Update the saved file's metadata with the actual error
-    if (savedBaseName) {
-      try {
-        // Re-save with updated error info (overwrites the 'Pending' metadata)
-        await api.saveFailedAudio(null, {
-          timestamp: new Date().toISOString(),
-          mode,
-          sizeMB: audioSizeMB,
-          duration,
-          error: failureSummary,
-          style: activeStyleId
-        }, savedBaseName);
-      } catch (e) { /* already saved, non-critical */ }
-    }
-    if (outputEl) {
-      outputEl.innerHTML = `<span style="color: var(--accent-warning)">⚠️ ${savedBaseName ? 'Transcription failed. Recording is saved safely.' : 'Transcription failed and the recording could not be saved. Check available disk space.'}</span>`;
-    }
-    showToast(savedBaseName ? '⚠️ Recording saved — retry from Dashboard' : 'Recording could not be saved. Check available disk space.', 'error');
-    await loadFailedRecordings();
-    api.overlayError();
-  }
-
+  api.overlayDone?.({ words, label: delivered === 'clipboard' ? 'Copied: press Ctrl+V' : `${words} words` });
+  homeOrb?.setState('done');
+  setOrbCaption(mode === 'retry' ? 'Recovered and copied to your clipboard' : 'Done. Tap to go again');
+  setTimeout(() => { if (homeOrb?.state === 'done') homeOrb.setState('idle'); }, 1500);
+  if (mode === 'retry') toast('Recovered. The text is on your clipboard.', 'success');
   isProcessingAudio = false;
-  hideRecordingTimer();
 }
 
+function finishWithError(message, setup = false) {
+  setOutput('error', message);
+  setOrbCaption(message);
+  homeOrb?.setState('error');
+  setTimeout(() => homeOrb?.setState('idle'), 1400);
+  api.overlayError?.(message);
+  if (settings.sounds !== false) window.FreesiaAudio?.chime('error');
+  toast(message, 'error', 5000);
+  if (setup) $('setupBanner')?.removeAttribute('hidden');
+  isProcessingAudio = false;
+}
+
+// ---------------------------------------------------------- vocabulary
+function applyVocabulary(text) {
+  try { return window.FreesiaVocab ? window.FreesiaVocab.apply(text, settings.dictionary || [], settings.corrections || []) : text; }
+  catch (e) { logError('applyVocabulary', e); return text; }
+}
+
+// "Teach Freesia": the user marks what was written and what they said.
+// The correction applies to every future dictation, and the right term also
+// becomes a vocabulary hint for the speech model.
+async function teachCorrection({ from = '', to = '', historyId = null } = {}) {
+  const body = h('div', {}, [
+    h('p.hint', { text: 'Freesia will fix this automatically from now on, and the correct term becomes a hint for the speech model.' }),
+    h('div.field.mt-12', {}, [h('label', { text: 'Freesia wrote' }), h('input.input', { id: 'teachFrom', value: from, maxlength: 80, placeholder: 'cloud opus', spellcheck: 'false' })]),
+    h('div.field', {}, [h('label', { text: 'I actually said' }), h('input.input', { id: 'teachTo', value: to, maxlength: 80, placeholder: 'Claude Opus', spellcheck: 'false', list: 'teachTerms' }),
+      h('datalist', { id: 'teachTerms' }, (settings.dictionary || []).map((w) => h('option', { value: w })))])
+  ]);
+  let values = null;
+  const ok = await dialog({
+    title: 'Teach a correction', body,
+    actions: [{ label: 'Cancel', kind: 'ghost', value: false }, {
+      label: 'Save correction', kind: 'primary', value: true,
+      validate: (box) => {
+        const f = box.querySelector('#teachFrom').value.trim();
+        const t = box.querySelector('#teachTo').value.trim();
+        if (!f || !t || f.toLowerCase() === t.toLowerCase()) { toast('Fill in both, and make them different', 'error'); return false; }
+        values = { from: f, to: t };
+        return true;
+      }
+    }]
+  });
+  if (!ok || !values) return;
+  const list = (settings.corrections || []).filter((c) => c.from.toLowerCase() !== values.from.toLowerCase());
+  list.push(values);
+  await saveSetting('corrections', list);
+  const dict = settings.dictionary || [];
+  if (!dict.some((d) => d.toLowerCase() === values.to.toLowerCase())) { dict.push(values.to); await saveSetting('dictionary', dict); }
+  if (historyId != null) {
+    const hist = settings.history || [];
+    const item = hist.find((x) => String(x.id) === String(historyId));
+    if (item) { item.text = applyVocabulary(item.text); await saveSetting('history', hist); }
+  }
+  renderDictionary();
+  renderCorrections();
+  renderHistory();
+  toast(`Learned: “${values.from}” → “${values.to}”`, 'success');
+}
+
+async function removeCorrection(from) {
+  await saveSetting('corrections', (settings.corrections || []).filter((c) => c.from !== from));
+  renderCorrections();
+}
+
+function renderCorrections() {
+  const list = $('correctionList');
+  if (!list) return;
+  const items = settings.corrections || [];
+  list.replaceChildren(...(items.length ? items.map((c) => h('span.chip', {}, [
+    h('span', { class: 'muted', text: c.from }), h('span', { class: 'snippet-arrow', text: '→' }), h('b', { text: c.to }),
+    h('button.x', { title: 'Forget this correction', html: icon('x'), onclick: () => removeCorrection(c.from) })
+  ])) : [h('span.hint', { text: 'None yet. Use “Fix a word” on any History item, or the button above.' })]));
+}
+
+// ---------------------------------------------------------- formatting
 function buildSnippetInstructions() {
   const snippets = settings.snippets || [];
   if (snippets.length === 0) return '';
-  const list = snippets
-    .map(s => `- Trigger: "${s.trigger}" -> Expansion: "${s.expansion}"`)
-    .join('\n');
+  const list = snippets.map((s) => `- Trigger: "${s.trigger}" -> Expansion: "${s.expansion}"`).join('\n');
   return `\n\nThe user has personal text snippets (voice shortcuts):\n${list}\n` +
-    `Snippet rules — follow them strictly:\n` +
-    `1. Apply an expansion ONLY when the speaker deliberately dictated the trigger phrase as a shortcut, for example explicitly closing a formal message with a sign-off trigger.\n` +
-    `2. If similar words occur naturally in speech (a casual "thank you", mentioning the phrase in passing, or talking ABOUT the snippet), leave the words exactly as spoken and do NOT expand.\n` +
-    `3. Never apply an expansion because YOUR formatting introduced words resembling a trigger. Expansions may only be justified by the speaker's own words.\n` +
-    `4. When in doubt, do not expand.`;
+    'Snippet rules — follow them strictly:\n' +
+    '1. Apply an expansion ONLY when the speaker deliberately dictated the trigger phrase as a shortcut, for example explicitly closing a formal message with a sign-off trigger.\n' +
+    '2. If similar words occur naturally in speech (a casual "thank you", mentioning the phrase in passing, or talking ABOUT the snippet), leave the words exactly as spoken and do NOT expand.\n' +
+    '3. Never apply an expansion because YOUR formatting introduced words resembling a trigger. Expansions may only be justified by the speaker\'s own words.\n' +
+    '4. When in doubt, do not expand.';
 }
 
-// Whether any opt-in processing tool is active
 function anyToolEnabled() {
   return !!(settings.toolTrimSpelling || settings.toolSpokenEmoji || settings.toolPolish);
 }
 
-// Instructions appended to the formatting prompt for each enabled tool
 function buildToolInstructions() {
   const parts = [];
-  if (settings.toolTrimSpelling) {
-    parts.push('SPELLING CLEANUP: When the speaker says a word or name and then spells it out letter by letter to help transcription (for example "Arash Ahmadi, A R A S H A H M A D I" or "A-R-A-S-H"), use the spelling ONLY to get the correct spelling of that word, then REMOVE the spelled-out letters from the output. Keep the word spelled correctly; never leave the individual letters in the text.');
-  }
-  if (settings.toolSpokenEmoji) {
-    parts.push('SPOKEN EMOJI: When the speaker names an emoji (for example "smiley face", "heart emoji", "thumbs up", "fire emoji"), replace that phrase with the actual emoji character (🙂, ❤️, 👍, 🔥, etc.), whether it appears at the end or in the middle of a sentence. Only replace clear emoji references, not ordinary words.');
-  }
-  if (settings.toolPolish) {
-    parts.push('POLISH & REPHRASE: The speech may be rough, with false starts, repetitions, or grammatical errors. Rewrite it into clear, well-structured, natural writing while preserving the speaker\'s meaning, intent, and key details exactly. Do not add new information.');
-  }
+  if (settings.toolTrimSpelling) parts.push('SPELLING CLEANUP: When the speaker says a word or name and then spells it out letter by letter (for example "Arash Ahmadi, A R A S H A H M A D I" or "A-R-A-S-H"), use the spelling ONLY to get that word right, then REMOVE the spelled-out letters. Never leave the individual letters in the text.');
+  if (settings.toolSpokenEmoji) parts.push('SPOKEN EMOJI: When the speaker names an emoji (for example "smiley face", "heart emoji", "thumbs up", "fire emoji"), replace that phrase with the emoji character (🙂, ❤️, 👍, 🔥, etc.). Only replace clear emoji references, not ordinary words.');
+  if (settings.toolPolish) parts.push('POLISH & REPHRASE: The speech may be rough, with false starts, repetitions, or grammatical errors. Rewrite it into clear, natural writing while preserving the speaker\'s meaning, intent, and key details exactly. Do not add new information.');
   if (parts.length === 0) return '';
   return '\n\nEnabled tools — apply all of these:\n- ' + parts.join('\n- ');
 }
 
-async function formatWithAI(rawText, mode, model = getSelectedModel()) {
+function buildFormatPrompt(rawText, mode, { selection = '', style = getActiveStyle() } = {}) {
   const dictWords = (settings.dictionary || []).join(', ');
   const dictInstructions = dictWords ? `\nPreserve these custom words exactly: ${dictWords}` : '';
-
-  // Get active style
-  const style = getActiveStyle();
-  const toolInstructions = buildToolInstructions();
-
-  // Verbatim style skips formatting — unless the user turned on tools that
-  // need the model (spelling cleanup, spoken emoji, polish).
-  if (style.id === 'verbatim' && mode !== 'command' && !toolInstructions) return rawText;
-
-  const snippetInstructions = buildSnippetInstructions();
-  const noInventions = '\nDo NOT invent content the speaker did not say: no added greetings, no added sign-offs, no added names or signatures unless the speaker dictated them or deliberately used a snippet trigger.';
-
-  let prompt;
   if (mode === 'command') {
-    prompt = `You are a text editor. The user selected text and gave a voice command. Execute the command on the text and return ONLY the result.\n\nVoice command and context: "${rawText}"\n\nReturn only the edited text.`;
-  } else {
-    // Verbatim + tools: keep the words as spoken, only apply the tools
-    const stylePrompt = (style.id === 'verbatim')
-      ? 'Return the dictation exactly as spoken, changing nothing except what the enabled tools below require.'
-      : (style.prompt || 'Clean up this dictation into polished text.');
-    let langNote = '';
-    if (style.id === 'native') {
-      langNote = '\nIMPORTANT: The output must be in English. Ensure natural, fluent English text.';
+    if (selection) {
+      return `You are a precise text editor. The user selected some text and spoke an instruction for changing it.\n\nSelected text:\n"""\n${selection}\n"""\n\nSpoken instruction: "${rawText}"\n\nApply the instruction to the selected text.${dictInstructions}\nReturn ONLY the resulting text, with no quotes, labels or commentary.`;
     }
-    prompt = `${stylePrompt}${langNote}${noInventions}${dictInstructions}${snippetInstructions}${toolInstructions}\n\nRaw transcript: "${rawText}"\n\nReturn ONLY the formatted text, nothing else.`;
+    return `The user spoke an instruction asking you to write something. Instruction: "${rawText}"${dictInstructions}\nWrite exactly what was requested. Return ONLY that text, with no commentary.`;
   }
+  const toolInstructions = buildToolInstructions();
+  const stylePrompt = style.id === 'verbatim'
+    ? 'Return the dictation exactly as spoken, changing nothing except what the enabled tools below require.'
+    : (style.prompt || 'Clean up this dictation into polished text.');
+  const langNote = style.id === 'native' ? '\nIMPORTANT: The transcript may be in another language. The output must be fluent, natural English that keeps every idea.' : '';
+  const noInventions = '\nDo NOT invent content the speaker did not say: no added greetings, sign-offs, names or signatures unless the speaker dictated them or deliberately used a snippet trigger. Never answer questions in the transcript; just format them.';
+  return `${stylePrompt}${langNote}${noInventions}${dictInstructions}${buildSnippetInstructions()}${toolInstructions}\n\nRaw transcript: "${rawText}"\n\nReturn ONLY the formatted text, nothing else.`;
+}
 
+async function formatText(rawText, mode, { selection = '', engineUsed = '' } = {}) {
+  const style = getActiveStyle();
+  const formatter = settings.aiFormatting === false && mode !== 'command' ? null : pickFormatter();
+  const needsModel = mode === 'command' || style.id !== 'verbatim' || anyToolEnabled();
+  // Gemini already translated native speech during transcription
+  if (!needsModel) return { text: rawText, formatter: null };
+  if (!formatter) {
+    return { text: mode === 'command' ? rawText : expandSnippets(rawText), formatter: null };
+  }
+  if (style.id === 'native' && engineUsed === 'gemini' && !anyToolEnabled() && mode !== 'command') {
+    return { text: rawText, formatter: null };
+  }
+  const prompt = buildFormatPrompt(rawText, mode, { selection, style });
   try {
-    const response = await fetchJsonWithTimeout(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${settings.apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.3 }
-        })
-      }, 12000
-    );
-
-    if (response.ok) {
-      return responseText(response.data) || rawText;
-    }
-    logError('formatWithAI', new Error(`Formatting failed [model=${model}, http=${response.status}]`));
+    const res = await api.format({ engine: formatter, prompt, temperature: 0.2 });
+    if (res?.text) return { text: stripWrapping(res.text, rawText), formatter };
+    if (res?.error) logError('formatText', new Error(`${formatter}: ${res.error.message}`));
   } catch (e) {
-    logError('formatWithAI', e);
+    logError('formatText', e);
   }
-  return rawText; // Fallback to raw text
+  // Formatting failed: never lose the words
+  return { text: mode === 'command' ? rawText : expandSnippets(rawText), formatter: null };
+}
+
+// Models sometimes wrap the answer in quotes or a label; peel that off.
+function stripWrapping(text, raw) {
+  let t = String(text).trim();
+  t = t.replace(/^(formatted text|output|result)\s*:\s*/i, '');
+  if (/^["“].*["”]$/s.test(t) && !/^["“]/.test(String(raw).trim())) t = t.slice(1, -1).trim();
+  return t;
 }
 
 function expandSnippets(text) {
-  // Fallback path (AI formatting disabled). Word-boundary match so a
-  // trigger like "regards" can no longer fire from inside other words,
-  // and each trigger expands at most once per dictation.
-  const snippets = settings.snippets || [];
   let result = text;
-  for (const s of snippets) {
+  for (const s of settings.snippets || []) {
     const escaped = s.trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`\\b${escaped}\\b`, 'i');
-    result = result.replace(regex, s.expansion);
+    result = result.replace(new RegExp(`\\b${escaped}\\b`, 'i'), s.expansion);
   }
   return result;
 }
 
-// ============================================
-// Waveform Visualization
-// ============================================
-// Radial waveform that blooms outward from the central mic button, like
-// petals of sound. Drawn on the single #waveformCanvas behind the bloom.
-function drawWaveform() {
-  const canvas = document.getElementById('waveformCanvas');
-  if (!canvas || !analyser) return;
-  const ctx = canvas.getContext('2d');
-  const bufferLength = analyser.frequencyBinCount;
-  const dataArray = new Uint8Array(bufferLength);
-  const timeDomainData = new Float32Array(analyser.fftSize);
-  const BAR_COUNT = 88;
-  const meter = window.createAudioMeter();
-
-  // Petal palette read from the active theme so it works in light + dark
-  const styles = getComputedStyle(document.documentElement);
-  const violet = (styles.getPropertyValue('--accent-violet') || '#A78BFA').trim();
-  const pink = (styles.getPropertyValue('--accent-pink') || '#F472B6').trim();
-  const amber = (styles.getPropertyValue('--accent-amber') || '#FBBF24').trim();
-  const colors = Array.from({ length: BAR_COUNT }, (_, i) => {
-    const t = i / BAR_COUNT;
-    return t < 0.5 ? lerpColor(violet, pink, t * 2) : lerpColor(pink, amber, (t - 0.5) * 2);
+// ==========================================================
+// History
+// ==========================================================
+function bindHistory() {
+  $('historySearch')?.addEventListener('input', () => renderHistory());
+  $('btnClearHistory')?.addEventListener('click', async () => {
+    if (!(settings.history || []).length) return;
+    if (!(await confirmDialog('Clear history?', 'Every saved transcript will be deleted from this PC. Stats are kept.', { ok: 'Clear history', danger: true }))) return;
+    await saveSetting('history', []);
+    renderHistory();
+    toast('History cleared', 'info');
   });
+  $('btnOpenRecordings')?.addEventListener('click', () => api.openRecordingsFolder?.());
+}
 
-  function draw() {
-    if (!isRecording || !analyser) return;
-    animFrameId = setTimeout(draw, 40);
-    analyser.getFloatTimeDomainData(timeDomainData);
-    const smoothedLevel = meter.sample(timeDomainData);
+async function addToHistory({ text, mode, engine, durationSec, words, style }) {
+  const history = settings.history || [];
+  history.unshift({ id: Date.now(), text, mode, engine, durationSec: Math.round(durationSec || 0), words, style, timestamp: new Date().toISOString() });
+  if (history.length > 300) history.length = 300;
+  await saveSetting('history', history);
+  renderHistory();
+}
 
-    // Keep IPC bounded while still feeling immediate. The overlay uses this
-    // value directly, so silence produces flat bars and speech makes them rise.
-    const now = performance.now();
-    if (now - lastOverlayLevelSentAt >= 35) {
-      api.overlayAudioLevel?.(smoothedLevel);
-      lastOverlayLevelSentAt = now;
-    }
+function highlight(text, q) {
+  const safe = escapeHtml(text);
+  if (!q) return safe;
+  const re = new RegExp(`(${escapeHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  return safe.replace(re, '<mark>$1</mark>');
+}
 
-    if (document.hidden || !canvas.clientWidth || !ctx) return;
-    analyser.getByteFrequencyData(dataArray);
-    const spectrumPeak = Math.max(1, ...dataArray);
-    const size = canvas.clientWidth || 380;
-    if (canvas.width !== size) { canvas.width = size; canvas.height = size; }
-    const cx = canvas.width / 2;
-    const cy = canvas.height / 2;
-    // Inner radius sits just outside the 184px mic button
-    const inner = size * 0.265;
-    const maxLen = size * 0.20;
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    for (let i = 0; i < BAR_COUNT; i++) {
-      const angle = (i / BAR_COUNT) * Math.PI * 2 - Math.PI / 2;
-      const dataIndex = Math.floor((i / BAR_COUNT) * bufferLength * 0.7);
-      const value = smoothedLevel * (0.3 + 0.7 * dataArray[dataIndex] / spectrumPeak);
-      const len = 4 + value * maxLen;
-
-      const x1 = cx + Math.cos(angle) * inner;
-      const y1 = cy + Math.sin(angle) * inner;
-      const x2 = cx + Math.cos(angle) * (inner + len);
-      const y2 = cy + Math.sin(angle) * (inner + len);
-
-      // Colour ramps violet → pink → amber around the ring
-      ctx.strokeStyle = colors[i];
-      ctx.globalAlpha = 0.35 + value * 0.65;
-      ctx.lineWidth = 2.4;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
+function renderHistory() {
+  const list = $('historyList');
+  if (!list) return;
+  const q = ($('historySearch')?.value || '').trim();
+  const items = (settings.history || []).filter((h0) => !q || h0.text.toLowerCase().includes(q.toLowerCase()));
+  if (!items.length) {
+    list.innerHTML = `<div class="empty"><svg class="empty-art" viewBox="0 0 32 32"><use href="#i-flower"/></svg><div class="empty-title">${q ? 'Nothing matches' : 'Nothing here yet'}</div><p>${q ? 'Try another word.' : 'Everything you dictate will appear here.'}</p></div>`;
+    return;
   }
-  draw();
+  const groups = new Map();
+  for (const it of items) {
+    const key = dayLabel(it.timestamp);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(it);
+  }
+  let i = 0;
+  list.replaceChildren(...[...groups].map(([label, entries]) => h('div.day-group', {}, [
+    h('div.section-title', { text: label }),
+    h('div.history-list', {}, entries.map((it) => {
+      const time = new Date(it.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const textEl = h('div.history-text', { html: highlight(it.text, q), dir: isRtl(it.text) ? 'rtl' : 'ltr', title: 'Click to expand' });
+      const card = h('div.history-item.list-enter', { style: { '--i': Math.min(i++, 20) } }, [
+        h('div.history-time', { text: time }),
+        h('div', {}, [
+          textEl,
+          h('div.history-foot', {}, [
+            h('span.pill-tag', { text: it.mode === 'command' ? 'Edit' : it.mode === 'test' ? 'In app' : it.mode === 'retry' ? 'Recovered' : 'Dictation' }),
+            it.engine ? h('span.pill-tag', { text: ENGINE_LABELS[it.engine] || it.engine }) : null,
+            it.words ? h('span.pill-tag', { text: `${it.words} words` }) : null,
+            it.durationSec ? h('span.pill-tag', { text: clock(it.durationSec) }) : null
+          ])
+        ]),
+        h('div.history-actions', {}, [
+          h('button.icon-btn', { title: 'Copy', html: icon('copy'), onclick: async () => { await api.copyText(it.text); toast('Copied', 'success'); } }),
+          h('button.icon-btn', { title: 'Fix a word Freesia got wrong', html: icon('edit'), onclick: () => {
+            const sel = String(window.getSelection?.() || '').trim();
+            teachCorrection({ from: sel && it.text.includes(sel) ? sel : '', historyId: it.id });
+          } }),
+          h('button.icon-btn', { title: 'Delete', html: icon('trash'), onclick: () => deleteHistoryItem(it.id, card) })
+        ])
+      ]);
+      textEl.addEventListener('click', () => card.classList.toggle('expanded'));
+      return card;
+    }))
+  ])));
 }
 
-// Small hex-color interpolator for the radial gradient ring
-function lerpColor(a, b, t) {
-  const pa = hexToRgb(a), pb = hexToRgb(b);
-  if (!pa || !pb) return a;
-  const r = Math.round(pa.r + (pb.r - pa.r) * t);
-  const g = Math.round(pa.g + (pb.g - pa.g) * t);
-  const bl = Math.round(pa.b + (pb.b - pa.b) * t);
-  return `rgb(${r}, ${g}, ${bl})`;
-}
-function hexToRgb(hex) {
-  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex.trim());
-  return m ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : null;
-}
-function clearWaveform() {
-  const canvas = document.getElementById('waveformCanvas');
-  if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+async function deleteHistoryItem(id, card) {
+  card?.classList.add('list-leave');
+  await new Promise((r) => setTimeout(r, 200));
+  await saveSetting('history', (settings.history || []).filter((x) => String(x.id) !== String(id)));
+  renderHistory();
 }
 
-// ============================================
-// IPC Listeners (from main process shortcuts)
-// ============================================
-function setupIpcListeners() {
-  if (!api.onDictationStart) return;
-
-  api.onDictationStart(() => startRecording('dictate-inject'));
-  api.onDictationStop(() => stopRecording());
-  api.onCommandStart(() => startRecording('command'));
-  api.onDictationCancel?.(() => stopRecording(true));
+// ---------------------------------------------------------- recoveries
+async function loadFailedRecordings() {
+  try { renderFailedRecordings(await api.getFailedRecordings()); } catch (e) { logError('loadFailedRecordings', e); }
 }
 
-// ============================================
-// Toast Notifications
-// ============================================
-function showToast(message, type = 'info') {
-  const container = document.getElementById('toastContainer');
-  if (!container) return;
-
-  const toast = document.createElement('div');
-  toast.className = `toast toast-${type}`;
-  toast.innerHTML = `<span class="toast-msg">${message}</span>`;
-  toast.style.animation = 'slideInRight 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards';
-
-  container.appendChild(toast);
-
-  setTimeout(() => {
-    toast.style.animation = 'slideOutRight 0.3s ease forwards';
-    setTimeout(() => toast.remove(), 350);
-  }, 3000);
+function renderFailedRecordings(recordings = []) {
+  const failed = recordings.filter((r) => r.status !== 'success' && r.error !== 'Pending transcription');
+  const badge = $('navRecoveryBadge');
+  if (badge) { badge.hidden = !failed.length; badge.textContent = failed.length; }
+  const banner = $('recoveryBanner');
+  if (banner) {
+    banner.hidden = !failed.length;
+    const t = $('recoveryBannerTitle');
+    if (t) t.textContent = `${failed.length} recording${failed.length === 1 ? '' : 's'} waiting to be transcribed`;
+  }
+  const section = $('recoverySection');
+  const list = $('failedRecordingsList');
+  if (!section || !list) return;
+  const visible = recordings.filter((r) => r.error !== 'Pending transcription' || !isProcessingAudio);
+  section.hidden = !visible.length;
+  const cb = $('failedCountBadge'); if (cb) cb.textContent = visible.length;
+  list.replaceChildren(...visible.map((r, i) => {
+    const ok = r.status === 'success';
+    return h(`div.recovery-item.list-enter${ok ? '.ok' : ''}`, { style: { '--i': i } }, [
+      h('button.recovery-play', { title: ok ? 'Process again' : 'Retry now', html: icon('play'), onclick: () => retryFailedRecording(r.baseName) }),
+      h('div.recovery-body', {}, [
+        h('div.recovery-meta', { text: `${r.duration || '?'} · ${r.sizeMB || '?'} MB · ${r.timestamp ? new Date(r.timestamp).toLocaleString() : 'unknown time'}` }),
+        h('div.recovery-err', { text: ok ? (r.transcription || 'Transcribed') : (r.error || 'Not transcribed yet'), title: r.error || '' })
+      ]),
+      h('button.icon-btn', { title: 'Show in folder', html: icon('folder'), onclick: () => api.showRecordingInFolder(r.baseName) }),
+      h('button.icon-btn', { title: 'Delete', html: icon('trash'), onclick: () => deleteFailedRecording(r.baseName) })
+    ]);
+  }));
 }
 
-// ============================================
-// Utilities
-// ============================================
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+async function retryFailedRecording(baseName) {
+  if (isRecording || isStartingRecording || isStoppingRecording || isProcessingAudio) {
+    toast('Finish the current dictation first.', 'info');
+    return;
+  }
+  try {
+    const data = await api.getFailedRecordingData(baseName);
+    if (!data) { toast('That recording file is gone.', 'error'); loadFailedRecordings(); return; }
+    const meta = (await api.getFailedRecordings()).find((r) => r.baseName === baseName) || {};
+    showView('home');
+    // Retries go to the clipboard: the app you dictated into is long gone
+    await processAudio(new Blob([data], { type: 'audio/webm' }), 'retry', { existingBase: baseName, durationSec: meta.durationSec || 0 });
+  } catch (e) {
+    logError('retryFailedRecording', e);
+    toast(`Retry failed: ${e.message}`, 'error');
+  }
 }
 
-// ============================================
-// Dictation Styles
-// ============================================
-// Built-in styles plus any the user (or an agent) created
+async function deleteFailedRecording(baseName) {
+  if (!(await confirmDialog('Delete this recording?', 'The audio file will be removed from this PC. This cannot be undone.', { ok: 'Delete', danger: true }))) return;
+  await api.deleteFailedRecording(baseName);
+  loadFailedRecordings();
+}
+
+// ==========================================================
+// Styles
+// ==========================================================
 function getAllStyles() {
-  const builtIn = window.BUILT_IN_STYLES || [];
-  const custom = settings.customStyles || [];
-  return [...builtIn, ...custom];
+  return [...(window.BUILT_IN_STYLES || []), ...(settings.customStyles || [])];
+}
+function getActiveStyle() {
+  const all = getAllStyles();
+  return all.find((s) => s.id === activeStyleId) || all[0] || { id: 'normal', name: 'Normal', icon: '🗣️', prompt: null };
 }
 
-function getActiveStyle() {
-  const styles = getAllStyles();
-  return styles.find(s => s.id === activeStyleId) || styles[0] || { id: 'normal', name: 'Normal', prompt: null };
+function bindStyles() {
+  $('toggleAutoStyle')?.addEventListener('change', (e) => { saveSetting('autoStyleSwitch', e.target.checked); renderAppRules(); });
+  $('btnNewStyle')?.addEventListener('click', () => openStyleEditor());
+  $('appSearch')?.addEventListener('input', () => renderAppRules());
+  $('btnAddApp')?.addEventListener('click', addAppDialog);
+  $('btnRescanApps')?.addEventListener('click', () => { toast('Looking for apps…', 'info'); loadAppScan(true); });
+  $('btnImportStyle')?.addEventListener('click', importStyleFile);
+  $('btnOpenStylesFolder')?.addEventListener('click', () => api.openStylesFolder?.());
+  $('nativeLangSelect')?.addEventListener('change', async (e) => {
+    await saveSetting('nativeLanguage', e.target.value);
+    renderStyleGrid();
+    toast(`Speaking ${languageName(e.target.value)}`, 'success');
+  });
 }
 
 function renderStyleGrid() {
-  const grid = document.getElementById('styleGrid');
-  if (!grid) return;
-  const styles = getAllStyles();
-
-  let html = styles.map(s => `
-    <div class="style-chip ${s.id === activeStyleId ? 'active' : ''} ${s.custom ? 'is-custom' : ''}" onclick="selectStyle('${s.id}')">
-      <span class="style-chip-icon">${s.icon}</span>
-      <span class="style-chip-name">${escapeHtml(s.name)}</span>
-      ${s.custom
-        ? `<span class="style-chip-edit" title="Edit style" onclick="event.stopPropagation(); editCustomStyle('${s.id}')">✎</span>`
-        : `<span class="style-chip-color" style="background: ${s.color};"></span>`}
-    </div>
-  `).join('');
-
-  // Trailing "create a style" chip
-  html += `<div class="style-chip style-chip-add" onclick="openStyleEditor()" title="Create a custom style">
-      <span class="style-chip-icon">＋</span>
-      <span class="style-chip-name">New Style</span>
-    </div>`;
-
-  // Add native language picker when native style is active
+  const grid = $('styleGrid');
   const active = getActiveStyle();
-  if (active.id === 'native' && active.languageOptions) {
-    const currentLang = settings.nativeLanguage || active.language || 'fa';
-    html += `
-      <div class="native-lang-picker" style="grid-column: 1 / -1; margin-top: var(--space-sm);">
-        <label class="text-sm text-secondary" style="margin-bottom: 6px; display: block;">🌐 Transcription language:</label>
-        <select id="nativeLangSelect" class="select-input" onchange="setNativeLanguage(this.value)">
-          ${active.languageOptions.map(l => `<option value="${l.code}" ${l.code === currentLang ? 'selected' : ''}>${l.name}</option>`).join('')}
-        </select>
-      </div>
-    `;
+  if (grid) {
+    const cards = getAllStyles().map((s, i) => {
+      const card = h(`button.style-card.list-enter${s.id === activeStyleId ? '.active' : ''}`, { style: { '--accent': s.color || '#b69cff', '--i': i }, onclick: () => selectStyle(s.id) }, [
+        h('span.style-icon', { text: s.icon || '✨' }),
+        h('span.style-name', { text: s.name }),
+        h('span.style-desc', { text: s.description || '' }),
+        h('span.style-check', { html: icon('check') }),
+        s.custom ? h('span.style-edit', {}, [h('span.icon-btn', { role: 'button', title: 'Edit style', html: icon('edit'), onclick: (e) => { e.stopPropagation(); openStyleEditor(s); } })]) : null
+      ]);
+      return card;
+    });
+    cards.push(h('button.style-card.add', { onclick: () => openStyleEditor() }, [h('span.style-icon', { html: icon('plus') }), h('span.style-name', { text: 'New style' })]));
+    grid.replaceChildren(...cards);
   }
-
-  grid.innerHTML = html;
-
-  // Update badge
-  const badge = document.getElementById('activeStyleBadge');
-  if (badge) {
-    if (active.id === 'native') {
-      const lang = settings.nativeLanguage || active.language || 'fa';
-      const langName = active.languageOptions?.find(l => l.code === lang)?.name || lang;
-      badge.textContent = `${active.icon} ${langName}`;
-    } else {
-      badge.textContent = `${active.icon} ${active.name}`;
-    }
+  const nameEl = $('homeStyleName');
+  if (nameEl) {
+    nameEl.textContent = active.id === 'native' ? `${active.icon} ${languageName(settings.nativeLanguage || active.language || 'fa')} → English` : `${active.icon} ${active.name}`;
   }
-
-  // Update auto label
-  const autoLabel = document.getElementById('styleAutoLabel');
-  if (autoLabel) autoLabel.style.display = settings.autoStyleSwitch ? '' : 'none';
-
-  // Update toggle
-  const toggle = document.getElementById('toggleAutoStyle');
-  if (toggle) toggle.checked = !!settings.autoStyleSwitch;
+  const sw = $('homeStyleSwatch'); if (sw) sw.style.background = active.color || 'var(--bloom-2)';
+  const row = $('nativeLangRow');
+  const sel = $('nativeLangSelect');
+  if (row && sel) {
+    row.hidden = active.id !== 'native';
+    if (active.languageOptions && !sel.options.length) active.languageOptions.forEach((l) => sel.add(new Option(l.name, l.code)));
+    sel.value = settings.nativeLanguage || active.language || 'fa';
+  }
+  const t = $('toggleAutoStyle'); if (t) t.checked = !!settings.autoStyleSwitch;
 }
 
-async function selectStyle(styleId) {
-  activeStyleId = styleId;
-  await saveSetting('activeStyle', styleId);
+async function selectStyle(id) {
+  activeStyleId = id;
+  await saveSetting('activeStyle', id);
   renderStyleGrid();
-  const style = getActiveStyle();
-  showToast(`Style: ${style.icon} ${style.name}`, 'success');
 }
 
-// ============================================
-// Custom style editor
-// ============================================
-const STYLE_EMOJI_CHOICES = ['✨','🗣️','📧','🎓','⌨️','✍️','📋','📱','⚕️','📌','💬','📝','🌸','🎨','🧠','⚡','📣','🪄'];
+const STYLE_EMOJI = ['✨', '🗣️', '📧', '🎓', '⌨️', '✍️', '📋', '📱', '⚕️', '📌', '💬', '📝', '🌸', '🎨', '🧠', '⚡', '📣', '🪄'];
+const STYLE_COLORS = ['#7CC4FF', '#B69CFF', '#FF9EC7', '#FFD48A', '#5EE4A6', '#FF7A85', '#A1A1AA', '#F59E0B'];
 
-function openStyleEditor(existing = null) {
-  // Remove any prior editor
-  document.getElementById('styleEditorBackdrop')?.remove();
-
-  const s = existing || { icon: '✨', color: '#A78BFA', name: '', description: '', prompt: '' };
-  const backdrop = document.createElement('div');
-  backdrop.className = 'modal-backdrop';
-  backdrop.id = 'styleEditorBackdrop';
-  backdrop.innerHTML = `
-    <div class="modal glass-card" role="dialog" aria-modal="true">
-      <div class="modal-head">
-        <h3 class="heading-md">${existing ? 'Edit Style' : 'New Style'}</h3>
-        <button class="icon-btn" id="styleEditorClose" title="Close">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="input-group">
-          <label>Name</label>
-          <input type="text" class="input" id="styleName" maxlength="40" placeholder="e.g. Slack replies" value="${escapeHtml(s.name)}">
-        </div>
-        <div class="input-group" style="margin-top: var(--space-md);">
-          <label>Icon</label>
-          <div class="emoji-picker" id="styleEmojiPicker">
-            ${STYLE_EMOJI_CHOICES.map(e => `<button type="button" class="emoji-choice ${e === s.icon ? 'selected' : ''}" data-emoji="${e}">${e}</button>`).join('')}
-          </div>
-        </div>
-        <div class="input-group" style="margin-top: var(--space-md);">
-          <label>Accent color</label>
-          <input type="color" class="color-input" id="styleColor" value="${/^#[0-9a-fA-F]{6}$/.test(s.color) ? s.color : '#A78BFA'}">
-        </div>
-        <div class="input-group" style="margin-top: var(--space-md);">
-          <label>Short description (optional)</label>
-          <input type="text" class="input" id="styleDesc" maxlength="120" placeholder="When to use it" value="${escapeHtml(s.description || '')}">
-        </div>
-        <div class="input-group" style="margin-top: var(--space-md);">
-          <label>Instructions for the AI</label>
-          <textarea class="input" id="stylePrompt" rows="5" placeholder="Describe exactly how Freesia should format the dictation in this style...">${escapeHtml(s.prompt || '')}</textarea>
-          <p class="text-muted text-sm" style="margin-top:6px;">This is sent to Gemini to shape your text. Be specific: tone, punctuation, length, what to keep or drop.</p>
-        </div>
-      </div>
-      <div class="modal-foot">
-        ${existing ? `<button class="btn btn-danger btn-sm" id="styleEditorDelete">Delete</button>` : '<span></span>'}
-        <div class="flex gap-sm">
-          <button class="btn btn-ghost" id="styleEditorCancel">Cancel</button>
-          <button class="btn btn-primary" id="styleEditorSave">${existing ? 'Save' : 'Create'}</button>
-        </div>
-      </div>
-    </div>`;
-  document.body.appendChild(backdrop);
-
-  let chosenEmoji = s.icon || '✨';
-  backdrop.querySelectorAll('.emoji-choice').forEach(btn => {
-    btn.addEventListener('click', () => {
-      chosenEmoji = btn.dataset.emoji;
-      backdrop.querySelectorAll('.emoji-choice').forEach(b => b.classList.remove('selected'));
-      btn.classList.add('selected');
-    });
+async function openStyleEditor(existing = null) {
+  const s = existing || { icon: '✨', color: '#B69CFF', name: '', description: '', prompt: '' };
+  let emoji = s.icon || '✨';
+  let color = s.color || '#B69CFF';
+  const body = h('div', {}, [
+    h('div.field', {}, [h('label', { text: 'Name' }), h('input.input', { id: 'styleName', maxlength: 40, placeholder: 'e.g. Slack replies', value: s.name })]),
+    h('div.field', {}, [h('label', { text: 'Icon' }), h('div.emoji-grid', {}, STYLE_EMOJI.map((e) => h(`button.emoji-choice${e === emoji ? '.selected' : ''}`, {
+      type: 'button', text: e, onclick: (ev) => { emoji = e; $$('.emoji-choice', body).forEach((b) => b.classList.toggle('selected', b === ev.currentTarget)); }
+    })))]),
+    h('div.field', {}, [h('label', { text: 'Accent' }), h('div.color-row', {}, STYLE_COLORS.map((c) => h(`button.color-choice${c.toLowerCase() === color.toLowerCase() ? '.selected' : ''}`, {
+      type: 'button', style: { background: c }, title: c, onclick: (ev) => { color = c; $$('.color-choice', body).forEach((b) => b.classList.toggle('selected', b === ev.currentTarget)); }
+    })))]),
+    h('div.field', {}, [h('label', { text: 'When to use it (optional)' }), h('input.input', { id: 'styleDesc', maxlength: 120, placeholder: 'Short, friendly team chat', value: s.description || '' })]),
+    h('div.field', {}, [h('label', { text: 'Instructions for the formatter' }), h('textarea.textarea', { id: 'stylePrompt', rows: 5, maxlength: 4000, placeholder: 'Format this dictation as… Keep… Remove…' }, [s.prompt || '']),
+      h('span.hint', { text: 'Be specific about tone, punctuation, length, and what to keep or drop.' })])
+  ]);
+  const actions = [];
+  if (existing) actions.push({ label: 'Delete', kind: 'danger', value: 'delete' }, { spacer: true });
+  actions.push({ label: 'Cancel', kind: 'ghost', value: null }, {
+    label: existing ? 'Save' : 'Create style', kind: 'primary', value: 'save',
+    validate: (box) => {
+      const ok = box.querySelector('#styleName').value.trim() && box.querySelector('#stylePrompt').value.trim();
+      if (!ok) toast('Give the style a name and instructions', 'error');
+      return ok;
+    }
   });
-
-  const close = () => backdrop.remove();
-  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
-  document.getElementById('styleEditorClose').addEventListener('click', close);
-  document.getElementById('styleEditorCancel').addEventListener('click', close);
-  if (existing) {
-    document.getElementById('styleEditorDelete').addEventListener('click', () => deleteCustomStyle(existing.id));
-  }
-  document.getElementById('styleEditorSave').addEventListener('click', () => {
-    const name = document.getElementById('styleName').value.trim();
-    const prompt = document.getElementById('stylePrompt').value.trim();
-    if (!name || !prompt) { showToast('Give the style a name and instructions', 'error'); return; }
-    saveCustomStyle({
-      id: existing?.id,
-      name,
-      icon: chosenEmoji,
-      color: document.getElementById('styleColor').value,
-      description: document.getElementById('styleDesc').value.trim(),
-      prompt
-    });
+  let values = null;
+  const result = await dialog({
+    title: existing ? 'Edit style' : 'New style', body, actions,
+    onOpen: (box) => box.addEventListener('input', () => {
+      values = { name: box.querySelector('#styleName').value.trim(), description: box.querySelector('#styleDesc').value.trim(), prompt: box.querySelector('#stylePrompt').value.trim() };
+    })
   });
-}
-
-function editCustomStyle(id) {
-  const style = (settings.customStyles || []).find(s => s.id === id);
-  if (style) openStyleEditor(style);
+  values = values || { name: body.querySelector('#styleName').value.trim(), description: body.querySelector('#styleDesc').value.trim(), prompt: body.querySelector('#stylePrompt').value.trim() };
+  if (result === 'delete') return deleteCustomStyle(existing.id);
+  if (result !== 'save') return;
+  await saveCustomStyle({ id: existing?.id, ...values, icon: emoji, color });
 }
 
 async function saveCustomStyle(style) {
   const list = settings.customStyles || [];
   const id = style.id || `custom-${Date.now()}`;
   const record = { ...style, id, custom: true };
-  const idx = list.findIndex(s => s.id === id);
+  const idx = list.findIndex((x) => x.id === id);
   if (idx !== -1) list[idx] = record; else list.push(record);
   await saveSetting('customStyles', list);
-  settings.customStyles = list;
-  document.getElementById('styleEditorBackdrop')?.remove();
   activeStyleId = id;
   await saveSetting('activeStyle', id);
   renderStyleGrid();
-  showToast(`Style "${record.name}" saved`, 'success');
+  toast(`Style “${record.name}” saved`, 'success');
 }
 
 async function deleteCustomStyle(id) {
-  if (!confirm('Delete this custom style?')) return;
-  const list = (settings.customStyles || []).filter(s => s.id !== id);
-  await saveSetting('customStyles', list);
-  settings.customStyles = list;
+  if (!(await confirmDialog('Delete this style?', 'This custom style will be removed.', { ok: 'Delete', danger: true }))) return;
+  await saveSetting('customStyles', (settings.customStyles || []).filter((x) => x.id !== id));
   if (activeStyleId === id) { activeStyleId = 'normal'; await saveSetting('activeStyle', 'normal'); }
-  document.getElementById('styleEditorBackdrop')?.remove();
   renderStyleGrid();
-  showToast('Style deleted', 'info');
 }
 
-// Merge in styles that came from disk files or an import, de-duped by id
-async function mergeImportedStyles(incoming, sourceLabel) {
-  if (!incoming || incoming.length === 0) return 0;
-  const list = settings.customStyles || [];
-  const byId = new Map(list.map(s => [s.id, s]));
+async function mergeImportedStyles(incoming, label) {
+  if (!incoming?.length) return 0;
+  const byId = new Map((settings.customStyles || []).map((x) => [x.id, x]));
   let added = 0;
-  for (const st of incoming) {
-    const record = { ...st, custom: true };
-    if (!byId.has(record.id)) added++;
-    byId.set(record.id, record);
-  }
-  const merged = [...byId.values()];
-  await saveSetting('customStyles', merged);
-  settings.customStyles = merged;
+  for (const st of incoming) { if (!byId.has(st.id)) added++; byId.set(st.id, { ...st, custom: true }); }
+  await saveSetting('customStyles', [...byId.values()]);
   renderStyleGrid();
-  if (added > 0 && sourceLabel) showToast(`Imported ${added} style${added === 1 ? '' : 's'} from ${sourceLabel}`, 'success');
+  if (added && label) toast(`Imported ${added} style${added === 1 ? '' : 's'}`, 'success');
   return added;
 }
 
-// On launch, pick up any style files dropped in the styles folder
 async function loadStylesFromDisk() {
-  try {
-    const found = await api.importStylesFromDisk?.();
-    if (found && found.length) await mergeImportedStyles(found, null);
-  } catch (e) { logError('loadStylesFromDisk', e); }
+  try { const found = await api.importStylesFromDisk?.(); if (found?.length) await mergeImportedStyles(found, null); } catch (e) { logError('loadStylesFromDisk', e); }
 }
 
 async function importStyleFile() {
-  try {
-    const found = await api.importStyleFile?.();
-    await mergeImportedStyles(found, 'file');
-  } catch (e) { logError('importStyleFile', e); showToast('Import failed', 'error'); }
+  try { await mergeImportedStyles(await api.importStyleFile?.(), 'file'); } catch (e) { logError('importStyleFile', e); toast('Import failed', 'error'); }
 }
 
 async function detectAndApplyAutoStyle() {
   if (!settings.autoStyleSwitch) return;
   try {
-    const appName = await api.getForegroundApp();
-    if (!appName) return;
-    lastDetectedApp = appName;
-
-    // Check user overrides first
-    const overrides = settings.styleOverrides || {};
-    if (overrides[appName]) {
-      activeStyleId = overrides[appName];
-      renderStyleGrid();
-      return;
-    }
-
-    // Check built-in map
-    const map = window.APP_STYLE_MAP || {};
-    const entry = map[appName];
-    if (entry) {
-      activeStyleId = entry.styleId;
-      renderStyleGrid();
-    }
+    const raw = await api.getForegroundApp();
+    if (!raw) return;
+    const appName = APP_ALIASES[raw] || raw;
+    const override = (settings.styleOverrides || {})[appName];
+    const mapped = (window.APP_STYLE_MAP || {})[appName]?.styleId;
+    if (override || mapped) { activeStyleId = override || mapped; renderStyleGrid(); }
   } catch (e) {
     logError('detectAndApplyAutoStyle', e);
   }
 }
 
-function renderAppRules() {
-  const list = document.getElementById('appRulesList');
-  if (!list) return;
-  if (list.dataset.rendered) return;
-  list.dataset.rendered = 'true';
+// Real process names that differ from the rule keys
+const APP_ALIASES = { olk: 'outlook', 'ms-teams': 'teams', msteams: 'teams', 'code - insiders': 'code' };
+// Brand colours for apps whose logos are not freely available
+const APP_COLORS = { slack: '#4A154B', outlook: '#0078D4', winword: '#2B579A', excel: '#217346', powerpnt: '#D24726', teams: '#6264A7', msedge: '#0C59A4',
+  code: '#007ACC', devenv: '#5C2D91', linkedin: '#0A66C2', chatgpt: '#10A37F', windowsterminal: '#3A3A3A', powershell: '#012456', onenote: '#7719AA', skype: '#00AFF0' };
+let appScan = [];
+let appScanLoaded = false;
+let appScanLoading = false;
+let showAllApps = false;
+
+async function loadAppScan(force = false) {
+  if (appScanLoading) return;
+  appScanLoading = true;
+  const wanted = [...Object.keys(window.APP_STYLE_MAP || {}), ...Object.keys(settings.customApps || {}), ...Object.keys(APP_ALIASES)];
+  try { appScan = (await api.scanApps?.(force, wanted)) || []; } catch (e) { logError('scanApps', e); }
+  appScanLoading = false;
+  appScanLoaded = true;
+  renderAppRules();
+}
+
+function appIconEl(row) {
+  const mono = () => h('span.app-mono', { style: { background: APP_COLORS[row.key] || 'var(--raise-3)' }, text: String(row.name || row.key).replace(/^(Microsoft|Google)\s+/, '').slice(0, 1).toUpperCase() });
+  if (row.icon) return h('img.app-icon', { src: row.icon, alt: '' });
+  if (row.si && !APP_COLORS[row.key]) {
+    const img = h('img.app-icon.si', { src: window.getAppIconUrl?.(row.si, 'ffffff') || '', alt: '', loading: 'lazy' });
+    img.addEventListener('error', () => img.replaceWith(mono()));
+    return img;
+  }
+  return mono();
+}
+
+function appRuleRows() {
   const map = window.APP_STYLE_MAP || {};
-  const styles = window.BUILT_IN_STYLES || [];
-
-  // Group by category (first 40 most popular apps)
-  const popularKeys = [
-    'telegram', 'whatsapp', 'discord', 'slack', 'signal',
-    'outlook', 'thunderbird', 'protonmail',
-    'code', 'cursor', 'devenv', 'idea64', 'sublime_text',
-    'chrome', 'firefox', 'msedge', 'brave', 'arc',
-    'winword', 'excel', 'powerpnt',
-    'notion', 'obsidian', 'evernote',
-    'twitter', 'instagram', 'linkedin', 'reddit',
-    'zoom', 'teams',
-    'figma', 'photoshop',
-    'windowsterminal', 'powershell',
-    'spotify', 'chatgpt',
-    'todoist', 'linear', 'jira'
-  ];
-
-  list.innerHTML = popularKeys
-    .filter(k => map[k])
-    .map(k => {
-      const app = map[k];
-      const style = styles.find(s => s.id === app.styleId);
-      const iconUrl = window.getAppIconUrl?.(app.icon, 'ffffff') || '';
-      return `
-        <div class="app-rule-row">
-          <img class="app-rule-icon" loading="lazy" src="${iconUrl}" alt="" onerror="this.style.display='none'">
-          <span class="app-rule-name">${escapeHtml(app.name)}</span>
-          <span class="app-rule-style" style="background: ${style?.color || '#666'}22; color: ${style?.color || '#999'};">${style?.icon || ''} ${style?.name || app.styleId}</span>
-        </div>
-      `;
-    }).join('');
+  const overrides = settings.styleOverrides || {};
+  const custom = settings.customApps || {};
+  const found = new Map(appScan.map((a) => [APP_ALIASES[a.key] || a.key, a]));
+  const keys = new Set([...Object.keys(map), ...Object.keys(custom), ...Object.keys(overrides)]);
+  return [...keys].map((key) => {
+    const hit = found.get(key);
+    return {
+      key, name: custom[key]?.name || map[key]?.name || hit?.name || key,
+      installed: !!hit, icon: hit?.icon || custom[key]?.icon || '', si: map[key]?.icon,
+      styleId: overrides[key] || map[key]?.styleId || 'normal', overridden: key in overrides, custom: key in custom, builtIn: key in map
+    };
+  }).sort((a, b) => (b.installed - a.installed) || (b.custom - a.custom) || a.name.localeCompare(b.name));
 }
 
-// ============================================
-// Failed Recordings
-// ============================================
-async function loadFailedRecordings() {
-  try {
-    const recordings = await api.getFailedRecordings();
-    renderFailedRecordings(recordings);
-  } catch (e) {
-    logError('loadFailedRecordings', e);
-  }
-}
-
-function renderFailedRecordings(recordings) {
-  const section = document.getElementById('failedRecordingsSection');
-  const list = document.getElementById('failedRecordingsList');
-  const badge = document.getElementById('failedCountBadge');
-  if (!section || !list) return;
-
-  if (!recordings || recordings.length === 0) {
-    section.style.display = 'none';
+function renderAppRules() {
+  const list = $('appRulesList');
+  if (!list) return;
+  if (!appScanLoaded) {
+    if (!list.children.length) list.innerHTML = '<p class="hint"><span class="spin"></span> Finding the apps on this PC…</p>';
+    loadAppScan();
     return;
   }
+  const q = ($('appSearch')?.value || '').trim().toLowerCase();
+  const styles = getAllStyles();
+  const all = appRuleRows();
+  let rows = q ? all.filter((r) => r.name.toLowerCase().includes(q) || r.key.includes(q)) : all;
+  const hidden = !q && !showAllApps ? rows.filter((r) => !r.installed && !r.custom) : [];
+  if (hidden.length) rows = rows.filter((r) => r.installed || r.custom);
+  list.classList.toggle('dim', !settings.autoStyleSwitch);
+  const count = $('appRulesCount');
+  if (count) count.textContent = `${all.filter((r) => r.installed).length} on this PC`;
+  const nameCount = {};
+  for (const r of rows) nameCount[r.name] = (nameCount[r.name] || 0) + 1;
+  list.replaceChildren(...rows.map((r, i) => {
+    const select = h('select.select.select-sm', { 'aria-label': `Style for ${r.name}` }, styles.map((st) => new Option(`${st.icon}  ${st.name}`, st.id)));
+    select.value = r.styleId;
+    select.addEventListener('change', async () => {
+      const o = { ...(settings.styleOverrides || {}) };
+      if (r.builtIn && !r.custom && select.value === window.APP_STYLE_MAP[r.key]?.styleId) delete o[r.key]; else o[r.key] = select.value;
+      await saveSetting('styleOverrides', o);
+      renderAppRules();
+      toast(`${r.name} now uses ${styles.find((st) => st.id === select.value)?.name}`, 'success');
+    });
+    const actions = [];
+    if (r.custom) actions.push(h('button.icon-btn', { title: 'Remove app', html: icon('x'), onclick: () => removeCustomApp(r.key) }));
+    else if (r.overridden) actions.push(h('button.icon-btn', { title: 'Back to the default style', html: icon('refresh'), onclick: async () => {
+      const o = { ...(settings.styleOverrides || {}) }; delete o[r.key]; await saveSetting('styleOverrides', o); renderAppRules();
+    } }));
+    return h(`div.app-row.list-enter${r.installed ? '' : '.absent'}`, { style: { '--i': Math.min(i, 24) } }, [
+      appIconEl(r),
+      h('span.app-row-text', {}, [h('span.app-row-name', { text: r.name }),
+        h('span.app-row-meta', { text: `${r.custom ? 'Added by you' : r.installed ? (r.overridden ? 'On this PC · your choice' : 'On this PC') : 'Not installed'}${nameCount[r.name] > 1 ? ` · ${r.key}.exe` : ''}` })]),
+      select, ...actions
+    ]);
+  }));
+  if (hidden.length) {
+    list.append(h('button.btn.btn-ghost.btn-sm.app-more', { text: `Show ${hidden.length} more apps that aren't on this PC`, onclick: () => { showAllApps = true; renderAppRules(); } }));
+  }
+  if (!rows.length) list.append(h('p.hint', { text: q ? 'No app matches. Use “Add app” to pick one that is open right now.' : 'No apps found yet.' }));
+}
 
-  section.style.display = '';
-  if (badge) badge.textContent = recordings.length;
+async function addAppDialog() {
+  const listEl = h('div.app-pick', {}, [h('p.hint', { html: '<span class="spin"></span> Looking at open windows…' })]);
+  let picked = null;
+  const result = await dialog({
+    title: 'Add an app', text: 'Open the app you want, then pick it here. Freesia uses the chosen style whenever you dictate into it.', body: listEl,
+    actions: [{ label: 'Cancel', kind: 'ghost', value: null }],
+    onOpen: async (box, close) => {
+      const apps = (await api.runningApps?.()) || [];
+      listEl.replaceChildren(...(apps.length ? apps.map((a) => h('button.app-row.pick', { type: 'button', onclick: () => { picked = a; close('pick'); } }, [
+        appIconEl({ ...a, name: a.name || a.key }), h('span.app-row-text', {}, [h('span.app-row-name', { text: a.name || a.key }), h('span.app-row-meta', { text: a.title || a.key })])
+      ])) : [h('p.hint', { text: 'No open windows found.' })]));
+    }
+  });
+  if (result !== 'pick' || !picked) return;
+  const custom = { ...(settings.customApps || {}) };
+  custom[picked.key] = { name: picked.name || picked.key, icon: picked.icon || '' };
+  await saveSetting('customApps', custom);
+  const o = { ...(settings.styleOverrides || {}) };
+  if (!o[picked.key]) o[picked.key] = activeStyleId;
+  await saveSetting('styleOverrides', o);
+  if (!settings.autoStyleSwitch) { await saveSetting('autoStyleSwitch', true); renderStyleGrid(); }
+  renderAppRules();
+  toast(`${picked.name || picked.key} added`, 'success');
+}
 
-  list.innerHTML = recordings.map(r => {
-    const date = r.timestamp ? new Date(r.timestamp).toLocaleString() : 'Unknown';
-    const dur = r.duration || '?';
-    const size = r.sizeMB || '?';
-    const isSuccess = r.status === 'success';
-    
-    let detailsHtml = '';
-    if (isSuccess) {
-      const txt = r.transcription ? escapeHtml(r.transcription) + '...' : 'Saved successfully';
-      detailsHtml = `<div class="failed-recording-error text-sm" style="color: var(--accent-success); margin-top: 4px;">✅ ${txt}</div>`;
+async function removeCustomApp(key) {
+  const custom = { ...(settings.customApps || {}) }; delete custom[key];
+  const o = { ...(settings.styleOverrides || {}) }; delete o[key];
+  await saveSetting('customApps', custom);
+  await saveSetting('styleOverrides', o);
+  renderAppRules();
+}
+
+// ==========================================================
+// Vocabulary
+// ==========================================================
+let currentEditSnippetId = null;
+
+function bindVocabulary() {
+  const tabs = $('vocabTabs');
+  if (tabs) segmented(tabs, { onChange: (tab) => { $('tabDictionary').hidden = tab !== 'dictionary'; $('tabSnippets').hidden = tab !== 'snippets'; } });
+  $('btnSaveWord')?.addEventListener('click', addWord);
+  $('newWordInput')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') addWord(); });
+  $('btnAddSnippet')?.addEventListener('click', () => openSnippetForm());
+  $('btnTeach')?.addEventListener('click', () => teachCorrection());
+  renderCorrections();
+  $('btnCancelSnippet')?.addEventListener('click', () => { $('snippetForm').hidden = true; $('btnAddSnippet').hidden = false; });
+  $('btnSaveSnippet')?.addEventListener('click', saveSnippet);
+}
+
+async function addWord() {
+  const input = $('newWordInput');
+  const words = input.value.split(/[,\n]/).map((w) => w.trim()).filter(Boolean);
+  if (!words.length) return;
+  const dict = settings.dictionary || [];
+  let added = 0;
+  for (const w of words) if (!dict.some((d) => d.toLowerCase() === w.toLowerCase())) { dict.push(w); added++; }
+  await saveSetting('dictionary', dict);
+  input.value = '';
+  renderDictionary(true);
+  if (added) toast(`Added ${added === 1 ? `“${words[0]}”` : `${added} words`}`, 'success');
+}
+
+async function removeWord(word) {
+  await saveSetting('dictionary', (settings.dictionary || []).filter((w) => w !== word));
+  renderDictionary();
+}
+
+function renderDictionary(animateLast = false) {
+  const list = $('dictionaryList');
+  if (!list) return;
+  const dict = settings.dictionary || [];
+  if (!dict.length) {
+    list.innerHTML = '<div class="empty" style="width:100%"><div class="empty-title">No words yet</div><p>Add names, acronyms and jargon you use often.</p></div>';
+    return;
+  }
+  list.replaceChildren(...dict.map((w, i) => h(`span.chip${animateLast && i === dict.length - 1 ? '.pop' : ''}`, {}, [
+    h('span', { text: w }),
+    // Closure, not an inline handler: 2.x broke on words with apostrophes
+    h('button.x', { title: `Remove ${w}`, html: icon('x'), onclick: () => removeWord(w) })
+  ])));
+}
+
+function openSnippetForm(s = null) {
+  currentEditSnippetId = s?.id ?? null;
+  $('snippetTrigger').value = s?.trigger || '';
+  $('snippetExpansion').value = s?.expansion || '';
+  $('snippetForm').hidden = false;
+  $('btnAddSnippet').hidden = true;
+  $('snippetTrigger').focus();
+}
+
+async function saveSnippet() {
+  const trigger = $('snippetTrigger').value.trim();
+  const expansion = $('snippetExpansion').value.trim();
+  if (!trigger || !expansion) return toast('Fill in both fields', 'error');
+  const snippets = settings.snippets || [];
+  if (currentEditSnippetId != null) {
+    const s = snippets.find((x) => x.id === currentEditSnippetId);
+    if (s) Object.assign(s, { trigger, expansion });
+  } else {
+    snippets.push({ id: Date.now(), trigger, expansion });
+  }
+  await saveSetting('snippets', snippets);
+  currentEditSnippetId = null;
+  $('snippetForm').hidden = true;
+  $('btnAddSnippet').hidden = false;
+  renderSnippets();
+  toast(`Snippet “${trigger}” saved`, 'success');
+}
+
+async function removeSnippet(id) {
+  await saveSetting('snippets', (settings.snippets || []).filter((s) => s.id !== id));
+  renderSnippets();
+}
+
+function renderSnippets() {
+  const list = $('snippetList');
+  if (!list) return;
+  const snippets = settings.snippets || [];
+  if (!snippets.length) {
+    list.innerHTML = '<div class="empty" style="grid-column:1/-1"><div class="empty-title">No snippets yet</div><p>Say “my signature” and get your full sign-off.</p></div>';
+    return;
+  }
+  list.replaceChildren(...snippets.map((s, i) => h('div.snippet.list-enter', { style: { '--i': i } }, [
+    h('div.snippet-trigger', { text: s.trigger }),
+    h('div.snippet-expansion', { text: s.expansion }),
+    h('div.snippet-actions', {}, [
+      h('button.btn.btn-ghost.btn-sm', { html: `${icon('edit')}Edit`, onclick: () => openSnippetForm(s) }),
+      h('button.btn.btn-ghost.btn-sm', { html: `${icon('trash')}Delete`, onclick: () => removeSnippet(s.id) })
+    ])
+  ])));
+}
+
+// ==========================================================
+// Engines
+// ==========================================================
+function bindEngines() {
+  $$('[data-select-engine]').forEach((b) => b.addEventListener('click', () => setEngine(b.dataset.selectEngine)));
+  $('toggleFallback')?.addEventListener('change', (e) => saveSetting('engineFallback', e.target.checked));
+  $('selectFormatter')?.addEventListener('change', async (e) => { engineState = await api.setEngine('formatter', e.target.value); renderEngines(); });
+  const lang = $('selectLanguage');
+  if (lang) {
+    LANGUAGES.forEach(([c, n]) => lang.add(new Option(n, c)));
+    lang.addEventListener('change', (e) => saveSetting('language', e.target.value));
+  }
+  api.onLocalStatus?.((s) => { engineState.local = s; renderLocalBody(); renderEngineStatus(); renderEnginePill(); if (obStep === 1 && obEngine === 'local') renderObEngineForm(); });
+  api.onEngineRetry?.(({ model }) => setOutput('working', `Gemini is busy. Trying ${model}…`));
+}
+
+async function refreshEngines() {
+  try { engineState = await api.engineStatus(); } catch (e) { logError('refreshEngines', e); }
+  renderEngines();
+  renderEnginePill();
+}
+
+async function setEngine(id, quiet = false) {
+  engineState = await api.setEngine('engine', id);
+  $$('.engine').forEach((el) => el.classList.toggle('open', el.dataset.engine === id));
+  renderEngines();
+  renderEnginePill();
+  if (!quiet) toast(`${ENGINE_LABELS[id]} selected`, 'success');
+}
+
+function renderEngines() {
+  const sel = engineState.engine;
+  $$('.engine').forEach((el) => {
+    el.classList.toggle('selected', el.dataset.engine === sel);
+    if (!$$('.engine.open').length && el.dataset.engine === sel) el.classList.add('open');
+  });
+  renderEngineStatus();
+  renderCloudBody();
+  renderLocalBody();
+  renderGeminiBody();
+  const f = $('toggleFallback'); if (f) f.checked = settings.engineFallback !== false;
+  const fm = $('selectFormatter'); if (fm) fm.value = engineState.formatter || 'auto';
+  const lang = $('selectLanguage'); if (lang) lang.value = settings.language || 'auto';
+  const banner = $('setupBanner');
+  if (banner) banner.hidden = FALLBACK_ORDER.some((id) => isEngineReady(id));
+}
+
+function statusHtml(dot, text) {
+  return `<span class="dot ${dot}"></span>${escapeHtml(text)}`;
+}
+
+function renderEngineStatus() {
+  const c = engineState.cloud || {};
+  const l = engineState.local || {};
+  const g = engineState.gemini || {};
+  const set = (id, html) => { const el = $(id); if (el) el.innerHTML = html; };
+  set('cloudStatus', c.configured ? statusHtml('ok', c.username) : statusHtml('', c.signedOut ? 'Signed out' : 'Not signed in'));
+  set('localStatus', l.downloading ? statusHtml('busy', `Downloading ${Math.round((l.downloading.received / Math.max(1, l.downloading.total)) * 100)}%`)
+    : l.running ? statusHtml('ok', `Loaded · ${l.device || 'CPU'}`)
+      : l.starting ? statusHtml('busy', 'Loading…')
+        : l.configured ? statusHtml('warn', 'Ready · loads on demand') : statusHtml('', 'Not installed'));
+  set('geminiStatus', g.configured ? statusHtml('ok', g.model || 'Key saved') : statusHtml('', 'No key'));
+}
+
+function renderEnginePill() {
+  const id = engineState.engine || 'cloud';
+  const name = $('enginePillName'); if (name) name.textContent = ENGINE_LABELS[id];
+  const dot = $('enginePillDot');
+  if (dot) {
+    const l = engineState.local || {};
+    dot.className = `dot ${!isEngineReady(id) ? 'bad' : id === 'local' && !l.running ? (l.starting ? 'busy' : 'warn') : 'ok'}`;
+  }
+}
+
+function cloudLoginForm(onDone) {
+  const server = engineState.cloud?.server || '';
+  const form = h('form', { autocomplete: 'on' }, [
+    h('div.field', {}, [h('label', { text: 'Server' }), h('input.input', { name: 'server', value: server, required: true, spellcheck: 'false', placeholder: 'https://voice.example.com', autocomplete: 'url' })]),
+    h('div.grid-2.mt-12', {}, [
+      h('div.field', {}, [h('label', { text: 'Username' }), h('input.input', { name: 'username', autocomplete: 'username', required: true, spellcheck: 'false', value: engineState.cloud?.username || '' })]),
+      h('div.field', {}, [h('label', { text: 'Password' }), h('input.input', { name: 'password', type: 'password', autocomplete: 'current-password', required: true })])
+    ]),
+    h('div.btn-row', {}, [
+      h('button.btn.btn-primary', { type: 'submit', html: `${icon('lock')}Sign in` }),
+      h('span.hint', { html: 'No account? Ask whoever runs your Freesia Voice server for an invite.' })
+    ])
+  ]);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span>Signing in…';
+    const res = await api.cloudLogin(form.server.value, form.username.value.trim(), form.password.value);
+    btn.disabled = false;
+    btn.innerHTML = `${icon('lock')}Sign in`;
+    if (res?.error) { toast(res.error.message, 'error', 5000); return; }
+    form.password.value = '';
+    engineState.cloud = res;
+    toast(`Signed in as ${res.username}`, 'success');
+    renderEngines();
+    renderEnginePill();
+    onDone?.();
+  });
+  return form;
+}
+
+function renderCloudBody() {
+  const host = $('cloudBody');
+  if (!host) return;
+  const c = engineState.cloud || {};
+  host.replaceChildren();
+  if (!c.configured) { host.append(cloudLoginForm()); return; }
+  const facts = h('div.engine-facts', {}, [
+    fact('Account', c.username), fact('Server', (c.server || '').replace(/^https:\/\//, '')), fact('Speech model', c.model || 'Chosen by your server'), fact('Formatting', c.formattingModel || 'Chosen by your server')
+  ]);
+  const latency = h('span.hint');
+  host.append(facts, h('div.btn-row', {}, [
+    h('button.btn.btn-secondary.btn-sm', { html: `${icon('bolt')}Test connection`, onclick: async (e) => {
+      const b = e.currentTarget; b.disabled = true; latency.textContent = 'Testing…';
+      const r = await api.cloudHealth(); b.disabled = false;
+      if (r?.error) { latency.textContent = r.error.message; toast(r.error.message, 'error'); refreshEngines(); return; }
+      latency.innerHTML = `${icon('check')} Connected in ${r.latencyMs} ms`;
+      engineState.cloud = { ...engineState.cloud, model: r.model, formattingModel: r.formattingModel };
+    } }),
+    h('button.btn.btn-ghost.btn-sm', { html: `${icon('external')}Account & devices`, onclick: () => api.cloudOpenAccount() }),
+    h('button.btn.btn-ghost.btn-sm', { text: 'Sign out', onclick: async () => {
+      if (!(await confirmDialog('Sign out of Freesia Cloud?', 'This device\'s token is revoked on the server.', { ok: 'Sign out' }))) return;
+      engineState.cloud = await api.cloudLogout(); renderEngines(); renderEnginePill();
+    } }),
+    latency
+  ]));
+}
+
+function fact(k, v) { return h('div.fact', {}, [h('div.fact-k', { text: k }), h('div.fact-v', { text: v || '—' })]); }
+
+function localInstallBlock(compact = false) {
+  const l = engineState.local || {};
+  const models = Object.values(l.models || {});
+  const wrap = h('div');
+  if (l.downloading) {
+    const pct = Math.round((l.downloading.received / Math.max(1, l.downloading.total)) * 100);
+    wrap.append(
+      h('div.hint', { text: `Downloading ${l.models?.[l.downloading.modelId]?.label || 'model'} · ${bytes(l.downloading.received)} of ${bytes(l.downloading.total)}` }),
+      h('div.progress', {}, [h('span', { style: { width: `${pct}%` } })]),
+      h('div.btn-row', {}, [h('button.btn.btn-ghost.btn-sm', { text: 'Cancel', onclick: () => api.localCancel() })])
+    );
+    return wrap;
+  }
+  wrap.append(h('div.model-list', {}, models.map((m) => h(`button.model-opt${l.selected === m.id ? '.selected' : ''}`, {
+    type: 'button', onclick: async () => { engineState.local = await api.localSelect(m.id); renderLocalBody(); if (compact) renderObEngineForm(); }
+  }, [
+    h('span.engine-radio'),
+    h('span.grow', {}, [h('div', { html: `<b>${escapeHtml(m.label)}</b> ${m.installed ? '<span class="pill-tag ok">Installed</span>' : ''}` }), h('div.hint', { text: `${m.blurb} ${bytes(m.sizeBytes)} download, about ${m.vramGB} GB of GPU memory.` })])
+  ]))));
+  const sel = l.models?.[l.selected];
+  if (sel && !sel.installed) {
+    wrap.append(h('div.btn-row', {}, [
+      h('button.btn.btn-primary', { html: `${icon('download')}Download ${escapeHtml(sel.label)} (${bytes(sel.sizeBytes + (l.runtimeInstalled ? 0 : 32e6))})`, onclick: async () => {
+        const r = await api.localInstall(l.selected);
+        if (r?.error) toast(r.error.message, r.error.message === 'Download cancelled' ? 'info' : 'error', 5000);
+        else { toast('The model is installed on this PC', 'success'); engineState.local = r; api.localStart(); }
+        refreshEngines();
+      } }),
+      h('span.hint', { text: 'Verified with SHA-256. Stored in your Freesia folder.' })
+    ]));
+  }
+  if (l.error) wrap.append(h('p.hint.mt-8', { style: { color: 'var(--bad)' }, text: l.error }));
+  return wrap;
+}
+
+function renderLocalBody() {
+  const host = $('localBody');
+  if (!host) return;
+  const l = engineState.local || {};
+  host.replaceChildren();
+  if (l.configured && !l.downloading) {
+    host.append(h('div.engine-facts', {}, [
+      fact('Model', l.models?.[l.selected]?.label), fact('Status', l.running ? 'Loaded' : l.starting ? 'Loading…' : 'Idle'), fact('Runs on', l.device || (l.running ? 'CPU' : 'Picked at load')), fact('Privacy', 'Audio never leaves this PC')
+    ]));
+  }
+  host.append(localInstallBlock());
+  if (l.configured && !l.downloading) {
+    host.append(h('div.btn-row', {}, [
+      l.running
+        ? h('button.btn.btn-secondary.btn-sm', { text: 'Unload from memory', onclick: async () => { engineState.local = await api.localStop(); renderLocalBody(); } })
+        : h('button.btn.btn-secondary.btn-sm', { html: `${icon('bolt')}Load now`, onclick: async () => { const r = await api.localStart(); if (r?.error) toast(r.error.message, 'error', 5000); refreshEngines(); } }),
+      h('button.btn.btn-ghost.btn-sm', { html: `${icon('folder')}Folder`, onclick: () => api.localOpenFolder() }),
+      h('button.btn.btn-ghost.btn-sm', { html: `${icon('trash')}Remove model`, onclick: async () => {
+        if (!(await confirmDialog('Remove the model from this PC?', 'This frees the disk space. You can download it again later.', { ok: 'Remove', danger: true }))) return;
+        engineState.local = await api.localRemove(l.selected); refreshEngines();
+      } })
+    ]));
+    const unload = h('select.select', { style: { width: '200px' } }, [['0', 'Keep loaded'], ['5', 'After 5 minutes idle'], ['20', 'After 20 minutes idle'], ['60', 'After 1 hour idle']].map(([v, t]) => new Option(t, v)));
+    unload.value = String(settings.localUnloadMinutes ?? 20);
+    unload.addEventListener('change', () => saveSetting('localUnloadMinutes', Number(unload.value)));
+    const gpu = h('input', { type: 'checkbox' });
+    gpu.checked = settings.localUseGpu !== false;
+    gpu.addEventListener('change', async () => { await saveSetting('localUseGpu', gpu.checked); await api.localStop(); toast('Takes effect the next time the model loads', 'info'); });
+    host.append(h('div.rows.mt-16', {}, [
+      h('div.row', {}, [h('span.row-text', {}, [h('span.row-title', { text: 'Free GPU memory' }), h('span.row-desc', { style: { display: 'block' }, text: 'Unload the model when idle. The next dictation reloads it in a few seconds.' })]), unload]),
+      h('label.row', {}, [h('span.row-text', {}, [h('span.row-title', { text: 'Use the graphics card' }), h('span.row-desc', { style: { display: 'block' }, text: 'Picks your strongest GPU. Turn off to run on the CPU.' })]), h('span.switch', {}, [gpu, h('span.switch-track')])])
+    ]));
+  }
+}
+
+function geminiKeyForm(onDone) {
+  const g = engineState.gemini || {};
+  const input = h('input.input', { type: 'password', placeholder: g.configured ? `Saved key ${g.keyPreview}` : 'AIza…', autocomplete: 'off', spellcheck: 'false' });
+  const eye = h('button.icon-btn', { type: 'button', title: 'Show', html: icon('eye'), onclick: () => { input.type = input.type === 'password' ? 'text' : 'password'; } });
+  const save = h('button.btn.btn-primary', { text: g.configured ? 'Replace key' : 'Save key', onclick: async () => {
+    if (!input.value.trim()) return;
+    save.disabled = true; save.innerHTML = '<span class="spin"></span>Checking…';
+    const res = await api.geminiSetKey(input.value.trim());
+    save.disabled = false; save.textContent = 'Save key';
+    if (res?.error) { toast(res.error.message, 'error', 5000); return; }
+    input.value = '';
+    engineState.gemini = res;
+    toast('Gemini key saved and encrypted', 'success');
+    renderEngines(); renderEnginePill(); onDone?.();
+  } });
+  return h('div', {}, [
+    h('div.inline-form', {}, [h('div.input-wrap.grow', {}, [input, eye]), save]),
+    h('p.hint.mt-8', { html: 'Get a key at <a data-href="https://aistudio.google.com/app/apikey">Google AI Studio</a>. It is encrypted with your Windows account and only sent to Google.' })
+  ]);
+}
+
+function renderGeminiBody() {
+  const host = $('geminiBody');
+  if (!host) return;
+  const g = engineState.gemini || {};
+  host.replaceChildren(geminiKeyForm());
+  if (g.configured) {
+    const list = h('div.model-list', {}, (g.models || []).slice(0, 12).map((m) => h(`button.model-opt${g.model === m.id ? '.selected' : ''}`, {
+      type: 'button', onclick: async () => { await saveSetting('geminiModel', m.id); engineState.gemini.model = m.id; renderGeminiBody(); renderEngineStatus(); }
+    }, [h('span.engine-radio'), h('span.grow', {}, [h('div', { text: m.name }), h('div.model-id', { text: m.id })])])));
+    host.append(h('div.btn-row', {}, [
+      h('span.hint', { text: `Model: ${g.model}` }),
+      h('button.btn.btn-ghost.btn-sm', { html: `${icon('refresh')}Refresh models`, onclick: async () => { await api.geminiRefreshModels(); refreshEngines(); } }),
+      h('button.btn.btn-ghost.btn-sm', { text: 'Remove key', onclick: async () => { engineState.gemini = await api.geminiSetKey(''); refreshEngines(); } })
+    ]), list);
+  }
+}
+
+// External links rendered as data-href (no inline handlers under the CSP)
+document.addEventListener('click', (e) => {
+  const a = e.target.closest?.('[data-href]');
+  if (a) { e.preventDefault(); api.openExternal(a.dataset.href); }
+});
+
+// ==========================================================
+// Settings
+// ==========================================================
+let themeSeg = null;
+let shortcutRecorder = null;
+let settingsMicStream = null;
+let settingsMicTimer = null;
+
+function bindSettings() {
+  const seg = $('themeSeg');
+  if (seg) themeSeg = segmented(seg, { attr: 'data-theme-choice', onChange: (v) => setTheme(v) });
+  $('selectMicrophone')?.addEventListener('change', (e) => { saveSetting('microphoneId', e.target.value); if (settingsMicStream) { stopSettingsMic(); toggleSettingsMic(); } });
+  $('btnMicTest')?.addEventListener('click', toggleSettingsMic);
+  window.FreesiaAudio?.createMeter($('settingsMeter'), 18).reset();
+  window.FreesiaAudio?.createMeter($('obMeter'), 26).reset();
+  const toggles = { toggleOverlay: 'showOverlay', toggleSounds: 'sounds', toggleKeepRecordings: 'keepSuccessRecordings', toolTrimSpelling: 'toolTrimSpelling', toolSpokenEmoji: 'toolSpokenEmoji', toolPolish: 'toolPolish' };
+  for (const [id, key] of Object.entries(toggles)) $(id)?.addEventListener('change', (e) => { saveSetting(key, e.target.checked); if (key === 'sounds' && e.target.checked) window.FreesiaAudio?.chime('start'); });
+  $('toggleAutoLaunch')?.addEventListener('change', (e) => api.setAutoLaunch(e.target.checked));
+  $('toggleErrorReporting')?.addEventListener('change', (e) => {
+    saveSetting('errorReporting', e.target.checked);
+    if ($('onboardingErrorReporting')) $('onboardingErrorReporting').checked = e.target.checked;
+    toast(e.target.checked ? 'Error reports on. Thank you.' : 'Error reports off', 'info');
+  });
+  $$('.shortcut-rec').forEach((b) => b.addEventListener('click', () => beginShortcutRecording(b)));
+  $('btnCheckUpdates')?.addEventListener('click', checkForUpdates);
+  $('btnDownloadUpdate')?.addEventListener('click', downloadUpdate);
+  $('btnInstallUpdate')?.addEventListener('click', installUpdate);
+  $('btnGitHub')?.addEventListener('click', () => api.openExternal('https://github.com/arash-san/freesia'));
+  $('btnViewLog')?.addEventListener('click', () => api.openLog?.());
+  $('btnResetSettings')?.addEventListener('click', resetAllSettings);
+  window.addEventListener('online', checkForUpdates);
+}
+
+function updateSettingsUI() {
+  const check = (id, v) => { const el = $(id); if (el) el.checked = !!v; };
+  check('toggleOverlay', settings.showOverlay !== false);
+  check('toggleSounds', settings.sounds !== false);
+  check('toggleAutoLaunch', settings.autoLaunch);
+  check('toggleKeepRecordings', settings.keepSuccessRecordings);
+  check('toolTrimSpelling', settings.toolTrimSpelling);
+  check('toolSpokenEmoji', settings.toolSpokenEmoji);
+  check('toolPolish', settings.toolPolish);
+  check('toggleErrorReporting', settings.errorReporting);
+  check('onboardingErrorReporting', settings.errorReporting);
+  const mic = $('selectMicrophone'); if (mic) mic.value = settings.microphoneId || '';
+  themeSeg?.set(settings.theme || 'system', true);
+}
+
+function renderShortcuts() {
+  const map = { dictationShortcut: settings.dictationShortcut || 'Ctrl+Shift+Space', commandShortcut: settings.commandShortcut || 'Ctrl+Shift+Alt+Space' };
+  $$('[data-kbd]').forEach((el) => { el.innerHTML = kbdHtml(map[el.dataset.kbd]); });
+  $$('.shortcut-rec').forEach((b) => { if (!b.classList.contains('recording')) b.innerHTML = `<span class="kbd-group">${kbdHtml(map[b.dataset.shortcut])}</span>`; });
+}
+
+const KEY_NAMES = { Space: 'Space', Enter: 'Enter', Tab: 'Tab', Backquote: '`', Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Insert: 'Insert', Delete: 'Delete', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown' };
+
+function keyFromEvent(e) {
+  if (/^Key[A-Z]$/.test(e.code)) return e.code.slice(3);
+  if (/^Digit\d$/.test(e.code)) return e.code.slice(5);
+  if (/^F\d{1,2}$/.test(e.code)) return e.code;
+  if (/^Numpad\d$/.test(e.code)) return `num${e.code.slice(6)}`;
+  return KEY_NAMES[e.code] || null;
+}
+
+async function beginShortcutRecording(button) {
+  if (shortcutRecorder) return;
+  await api.suspendShortcuts?.();
+  button.classList.add('recording');
+  button.innerHTML = '<span class="rec-hint">Press the new shortcut… (Esc to cancel)</span>';
+  const finish = async (combo) => {
+    window.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('blur', onBlur);
+    shortcutRecorder = null;
+    button.classList.remove('recording');
+    if (combo) {
+      const res = await api.setShortcut(button.dataset.shortcut, combo);
+      if (res?.ok) { settings[button.dataset.shortcut] = combo; toast(`Shortcut set to ${combo}`, 'success'); }
+      else toast(res?.message || 'That shortcut could not be used.', 'error', 5000);
     } else {
-      const err = r.error ? escapeHtml(r.error).substring(0, 80) : 'Unknown error';
-      detailsHtml = `<div class="failed-recording-error text-sm" style="color: var(--accent-warning); margin-top: 4px;">⚠️ ${err}</div>`;
+      await api.registerShortcuts();
     }
-
-    return `
-      <div class="failed-recording-item glass-card" style="border-color: ${isSuccess ? 'var(--border)' : 'rgba(255,107,107,0.3)'}">
-        <div class="failed-recording-info">
-          <div class="failed-recording-meta">
-            <span class="tag">🎤 ${dur}</span>
-            <span class="text-muted text-sm">${size} MB • ${date}</span>
-          </div>
-          ${detailsHtml}
-        </div>
-        <div class="failed-recording-actions">
-          <button class="btn btn-primary btn-sm" onclick="retryFailedRecording('${escapeHtml(r.baseName)}')">${isSuccess ? 'Process Again' : 'Retry'}</button>
-          <button class="btn btn-secondary btn-sm" onclick="showRecordingInFolder('${escapeHtml(r.baseName)}')" title="Show the file in Windows Explorer">📂 Folder</button>
-          <button class="btn btn-ghost btn-sm" onclick="deleteFailedRecording('${escapeHtml(r.baseName)}')">Delete</button>
-        </div>
-      </div>
-    `;
-  }).join('');
+    settings = { ...settings, ...(await api.getSettings()) };
+    renderShortcuts();
+  };
+  const onKey = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === 'Escape') return finish(null);
+    const key = keyFromEvent(e);
+    const mods = [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Super'].filter(Boolean);
+    if (!key) { button.innerHTML = `<span class="kbd-group">${kbdHtml(mods.join('+'))}</span><span class="rec-hint">+ …</span>`; return; }
+    if (!mods.length && !/^F\d/.test(key)) { button.innerHTML = '<span class="rec-hint">Add Ctrl, Alt or Shift</span>'; return; }
+    finish([...mods, key].join('+'));
+  };
+  const onBlur = () => finish(null);
+  shortcutRecorder = { finish };
+  window.addEventListener('keydown', onKey, true);
+  window.addEventListener('blur', onBlur);
 }
 
-async function retryFailedRecording(baseName) {
-  if (isRecording || isStartingRecording || isStoppingRecording || isProcessingAudio) {
-    showToast('Finish the current dictation before retrying a recording.', 'info');
-    return;
-  }
-  const outputEl = document.getElementById('testOutput');
-  if (outputEl) outputEl.innerHTML = '<span class="spinner"></span> Loading saved recording...';
-  showToast('Retrying saved recording...', 'info');
-
+async function toggleSettingsMic() {
+  if (settingsMicStream) return stopSettingsMic();
+  const meter = window.FreesiaAudio?.createMeter($('settingsMeter'), 18);
   try {
-    const base64Audio = await api.getFailedRecordingData(baseName + '.webm');
-    if (!base64Audio) {
-      showToast('Recording file not found', 'error');
-      return;
+    settingsMicStream = await openMicrophoneStream();
+    const ctx = new AudioContext();
+    const an = ctx.createAnalyser();
+    an.fftSize = 1024;
+    ctx.createMediaStreamSource(settingsMicStream).connect(an);
+    settingsMicStream._ctx = ctx;
+    const buf = new Float32Array(an.fftSize);
+    const m = window.createAudioMeter();
+    settingsMicTimer = setInterval(() => { an.getFloatTimeDomainData(buf); meter.set(m.sample(buf)); }, 50);
+    $('btnMicTest').textContent = 'Stop';
+    setTimeout(stopSettingsMic, 20000);
+    loadMicrophones();
+  } catch (e) {
+    toast(micErrorMessage(e), 'error');
+  }
+}
+
+function stopSettingsMic() {
+  clearInterval(settingsMicTimer);
+  if (settingsMicStream) {
+    settingsMicStream.getTracks().forEach((t) => t.stop());
+    settingsMicStream._ctx?.close().catch(() => {});
+    settingsMicStream = null;
+  }
+  window.FreesiaAudio?.createMeter($('settingsMeter'), 18).reset();
+  const b = $('btnMicTest'); if (b) b.textContent = 'Test';
+}
+
+async function resetAllSettings() {
+  const ok = await confirmDialog('Reset Freesia?', 'This signs you out, forgets your Gemini key and clears every setting, word, snippet, style and your history. The on-device model stays downloaded.', { ok: 'Reset everything', danger: true });
+  if (!ok) return;
+  await api.cloudLogout?.();
+  await api.geminiSetKey?.('');
+  const keys = ['onboarded', 'geminiModel', 'microphoneId', 'aiFormatting', 'language', 'theme', 'autoLaunch', 'showOverlay', 'sounds', 'keepSuccessRecordings',
+    'dictionary', 'snippets', 'history', 'stats', 'customStyles', 'toolTrimSpelling', 'toolSpokenEmoji', 'toolPolish', 'errorReporting', 'activeStyle',
+    'autoStyleSwitch', 'styleOverrides', 'engine', 'engineFallback', 'formatter', 'nativeLanguage', 'dictationShortcut', 'commandShortcut'];
+  for (const k of keys) await api.setSetting(k, undefined);
+  location.reload();
+}
+
+// ---------------------------------------------------------- updates
+async function initAppMetadata() {
+  try {
+    const version = await api.getAppVersion?.();
+    if (version) {
+      const v = $('appVersionLabel'); if (v) v.textContent = `Freesia ${version}`;
+      const b = $('brandVersion'); if (b) b.textContent = version.split('.').slice(0, 2).join('.');
     }
-
-    // Convert base64 back to blob for processAudio
-    const binaryStr = atob(base64Audio);
-    const bytes = new Uint8Array(binaryStr.length);
-    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-    const audioBlob = new Blob([bytes], { type: 'audio/webm' });
-
-    // Process the audio (will retry internally too)
-    await processAudio(audioBlob, 'dictate-inject', baseName);
-    await loadFailedRecordings();
+    const s = await api.getUpdateStatus?.();
+    if (s) renderUpdateStatus(s);
   } catch (e) {
-    logError('retryFailedRecording', e);
-    showToast('Retry failed: ' + e.message, 'error');
+    logError('initAppMetadata', e);
+  }
+  api.onUpdateStatus?.((s) => renderUpdateStatus(s));
+}
+
+function renderUpdateStatus(state = {}) {
+  updateStatus = state;
+  const status = state.status || 'idle';
+  const busy = ['checking', 'downloading', 'installing'].includes(status);
+  const pct = Math.max(0, Math.min(100, Math.round(state.progress?.percent || 0)));
+  const txt = $('updateStatusText'); if (txt) txt.textContent = state.message || 'Update checks are ready.';
+  const check = $('btnCheckUpdates'); if (check) check.disabled = busy;
+  const dl = $('btnDownloadUpdate'); if (dl) dl.hidden = status !== 'available';
+  const inst = $('btnInstallUpdate'); if (inst) inst.hidden = status !== 'downloaded';
+  const prog = $('updateProgress');
+  if (prog) { prog.hidden = !(status === 'downloading' || status === 'downloaded'); const bar = $('updateProgressBar'); if (bar) bar.style.width = `${status === 'downloaded' ? 100 : pct}%`; }
+  const banner = $('updateBanner');
+  if (banner) {
+    banner.hidden = !['available', 'downloading', 'downloaded', 'installing'].includes(status);
+    const v = state.updateInfo?.version || '';
+    const title = $('updateBannerTitle');
+    if (title) title.textContent = status === 'downloaded' ? `Freesia ${v} is ready` : status === 'downloading' ? `Downloading Freesia ${v}` : `Freesia ${v} is available`;
+    const desc = $('updateBannerDesc'); if (desc) desc.textContent = state.message || '';
+    const bp = $('updateBannerProgress');
+    if (bp) { bp.hidden = status !== 'downloading'; bp.firstElementChild.style.width = `${pct}%`; }
+  }
+  const hb = $('btnHomeUpdate');
+  if (hb) {
+    hb.disabled = busy || status === 'disabled';
+    hb.textContent = status === 'available' ? 'Download update' : status === 'downloaded' ? 'Restart to update'
+      : status === 'downloading' ? `Downloading ${pct}%` : status === 'installing' ? 'Installing…' : 'Check for updates';
   }
 }
 
-async function deleteFailedRecording(baseName) {
-  if (!confirm('Delete this saved recording? This cannot be undone.')) return;
+async function checkForUpdates() {
   try {
-    await api.deleteFailedRecording(baseName);
-    await loadFailedRecordings();
-    showToast('Recording deleted', 'info');
+    renderUpdateStatus({ ...updateStatus, status: 'checking', message: 'Checking for updates…' });
+    const s = await api.checkForUpdates?.();
+    if (s) renderUpdateStatus(s);
   } catch (e) {
-    logError('deleteFailedRecording', e);
+    logError('checkForUpdates', e);
+    renderUpdateStatus({ status: 'error', message: e.message || 'Update check failed.' });
   }
 }
 
-// Make functions available globally for onclick handlers
-window.removeWord = removeWord;
-window.removeSnippet = removeSnippet;
-window.editSnippet = editSnippet;
-window.selectModel = selectModel;
-async function setNativeLanguage(langCode) {
-  await saveSetting('nativeLanguage', langCode);
-  // Also update the style's runtime language for current session
-  const style = getActiveStyle();
-  if (style.id === 'native') style.language = langCode;
-  renderStyleGrid();
-  const langName = style.languageOptions?.find(l => l.code === langCode)?.name || langCode;
-  showToast(`Language: ${langName}`, 'success');
+async function downloadUpdate() {
+  try {
+    renderUpdateStatus({ ...updateStatus, status: 'downloading', message: 'Starting download…' });
+    const s = await api.downloadUpdate?.();
+    if (s) renderUpdateStatus(s);
+  } catch (e) {
+    logError('downloadUpdate', e);
+    renderUpdateStatus({ status: 'error', message: e.message || 'Update download failed.' });
+  }
 }
 
-window.selectStyle = selectStyle;
-window.setNativeLanguage = setNativeLanguage;
-window.copyHistoryItem = copyHistoryItem;
-window.retryFailedRecording = retryFailedRecording;
-window.deleteFailedRecording = deleteFailedRecording;
-window.showRecordingInFolder = async (baseName) => { try { await api.showRecordingInFolder(baseName); } catch (e) { logError('showRecordingInFolder', e); } };
-window.openStyleEditor = openStyleEditor;
-window.editCustomStyle = editCustomStyle;
-window.deleteCustomStyle = deleteCustomStyle;
+async function installUpdate() {
+  if (isRecording || isStartingRecording || isProcessingAudio) { toast('Finish dictating before restarting.', 'info'); return; }
+  if (updateStatus.status !== 'downloaded') return;
+  const ok = await confirmDialog(`Install Freesia ${updateStatus.updateInfo?.version || ''}?`, 'Freesia closes, installs quietly and reopens in a few seconds.', { ok: 'Restart and update' });
+  if (!ok) return;
+  try {
+    const s = await api.installUpdate?.();
+    if (s) renderUpdateStatus(s);
+  } catch (e) {
+    logError('installUpdate', e);
+    renderUpdateStatus({ status: 'error', message: e.message || 'Update install failed.' });
+  }
+}
 
-// Pure helpers exposed for the unit tests (harmless in production).
+// ==========================================================
+// IPC from the main process
+// ==========================================================
+function setupIpcListeners() {
+  api.onDictationStart?.(() => startRecording('dictate-inject'));
+  api.onDictationStop?.(() => stopRecording());
+  api.onCommandStart?.((info) => startRecording('command', { selection: info?.selection || '' }));
+  api.onDictationCancel?.(() => stopRecording(true));
+}
+
+// Test hooks (pure helpers and state setters; harmless in production)
 window.__freesiaTest = {
-  normalizeStats,
-  formatDuration,
-  localDateString,
-  buildSnippetInstructions,
-  buildToolInstructions,
-  anyToolEnabled,
-  expandSnippets,
-  getAllStyles,
-  buildTranscribeModels,
-  summarizeTranscriptionFailure,
-  TRANSCRIBE_FALLBACK_MODELS,
-  DEFAULT_GEMINI_MODEL,
-  buildAudioConstraints,
-  fetchJsonWithTimeout,
-  responseText,
-  formatWithAI,
-  renderUpdateStatus,
-  installUpdate,
-  openMicrophoneStream,
-  startRecording,
-  stopRecording,
-  processAudio,
-  setSettings: (s) => { settings = s; }
+  normalizeStats, localDateString, formatDuration, buildSnippetInstructions, buildToolInstructions, anyToolEnabled, expandSnippets,
+  buildFormatPrompt, stripWrapping, getAllStyles, engineOrder, pickFormatter, isEngineReady, buildAudioConstraints, openMicrophoneStream,
+  startRecording, stopRecording, processAudio, renderUpdateStatus, installUpdate, keyFromEvent, spokenLanguage, geminiInstruction,
+  applyVocabulary, teachCorrection,
+  setSettings: (s) => { settings = s; }, setEngineState: (s) => { engineState = s; }, getSettings: () => settings
 };
