@@ -100,7 +100,10 @@ jobs:
       - name: Verify the signature and name the APK
         run: |
           apk=app/build/outputs/apk/release/app-release.apk
-          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$apk" | grep -m2 "Signer #1"
+          # verify fails the step on a bad signature; the certificate line's
+          # wording differs between apksigner versions, so match loosely
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$apk" > out-certs.txt
+          grep -m2 -iE "certificate (DN|SHA-256)" out-certs.txt
           mkdir -p out
           cp "$apk" "out/Freesia-Android-$VERSION.apk"
           (cd out && sha256sum "Freesia-Android-$VERSION.apk" > "Freesia-Android-$VERSION.apk.sha256" && cat ./*.sha256)
