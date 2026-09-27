@@ -57,6 +57,10 @@ jobs:
 
       - name: Set up the Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The default also installs the retired "tools" package, which no
+          # longer exists in the SDK repository and fails the step.
+          packages: platform-tools
 
       - name: Install platform 37 and build tools
         run: sdkmanager --install "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
