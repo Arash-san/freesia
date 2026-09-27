@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only what the bubble needs: know when an editable field gains focus, when windows
+     (and the keyboard) change, and be able to write into the focused field. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:targetApi="31"
+    android:accessibilityEventTypes="typeViewFocused|typeViewTextSelectionChanged|typeWindowStateChanged|typeWindowsChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/a11y_service_description"
+    android:isAccessibilityTool="false"
+    android:notificationTimeout="60"
+    android:settingsActivity="com.freesia.app.ui.MainActivity"
+    android:summary="@string/a11y_service_summary" />

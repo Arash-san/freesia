@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon layer: the five-petal bloom as a flat shape, inside the 66 dp safe zone -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M54,49.2C47.98,43.91 47.25,33.64 54,26C60.75,33.64 60.02,43.91 54,49.2Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M58.57,52.52C61.73,45.16 71.28,41.28 80.63,45.35C75.46,54.13 65.45,56.61 58.57,52.52Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M56.82,57.88C64.8,58.62 71.43,66.51 70.46,76.65C60.51,74.45 55.06,65.7 56.82,57.88Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M51.18,57.88C52.94,65.7 47.49,74.45 37.54,76.65C36.57,66.51 43.2,58.62 51.18,57.88Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M49.43,52.52C42.55,56.61 32.54,54.13 27.37,45.35C36.72,41.28 46.27,45.16 49.43,52.52Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M50.9,54a3.1,3.1 0,1 1,6.2,0a3.1,3.1 0,1 1,-6.2,0Z" />
+</vector>

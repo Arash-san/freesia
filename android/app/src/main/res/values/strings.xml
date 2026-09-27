@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Freesia</string>
+    <string name="a11y_service_label">Freesia dictation bubble</string>
+    <string name="a11y_service_summary">Shows the Freesia bubble on text fields so you can dictate into any app.</string>
+    <string name="a11y_service_description">Freesia shows a small floating bubble when you tap into a text field. Tap the bubble to dictate; Freesia records your voice, sends it to your Freesia Cloud server to transcribe, and types the result into that field at the cursor.\n\nTo do this, Freesia detects which text field is focused and, only when you finish a dictation, reads that field to insert the text at the cursor. It does not read what you type, does not collect passwords (it never appears on password fields), and does not share screen content with anyone. Audio is sent only to the server you signed in to.</string>
+    <string name="notif_channel">Dictation</string>
+    <string name="notif_listening">Freesia is listening</string>
+    <string name="notif_listening_body">Tap the bubble again, or Stop, when you are done.</string>
+    <string name="notif_stop">Stop</string>
+    <string name="notif_channel_recovered">Recovered dictations</string>
+</resources>

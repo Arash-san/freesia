@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Five-petal bloom (the app icon's flower) for the status bar -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M12,9.9C9.69,7.87 9.41,3.93 12,1C14.59,3.93 14.31,7.87 12,9.9Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M14,11.35C15.21,8.53 18.88,7.04 22.46,8.6C20.48,11.97 16.64,12.92 14,11.35Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M13.23,13.7C16.29,13.98 18.84,17.01 18.47,20.9C14.65,20.05 12.56,16.7 13.23,13.7Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M10.77,13.7C11.44,16.7 9.35,20.05 5.53,20.9C5.16,17.01 7.71,13.98 10.77,13.7Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M10,11.35C7.36,12.92 3.52,11.97 1.54,8.6C5.12,7.04 8.79,8.53 10,11.35Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M10.65,12a1.35,1.35 0,1 1,2.7,0a1.35,1.35 0,1 1,-2.7,0Z" />
+</vector>
