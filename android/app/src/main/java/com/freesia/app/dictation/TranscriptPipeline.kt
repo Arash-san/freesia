@@ -20,6 +20,8 @@ data class PipelineResult(val raw: String, val text: String, val formatted: Bool
  *     with backoff when the failure may pass on its own ([RetryPolicy]). An
  *     ApiException after that means the recording must be kept for a later retry.
  *  2. The vocabulary corrector on the raw transcript.
+ *     Native Language asks /v1/audio/translations instead: the server's speech and
+ *     translation models return English, and step 3 is skipped.
  *  3. Style formatting via /v1/chat/completions. Any failure, including an
  *     expired session, falls back to the corrected raw transcript: text is never lost.
  *  4. The vocabulary corrector again, because the formatter may reintroduce a
@@ -45,10 +47,13 @@ class TranscriptPipeline(
                 PromptBuilder.transcriptionLanguage(style, s.language, s.nativeLanguage),
                 PromptBuilder.vocabularyPrompt(s.dictionary),
                 durationSec,
+                translate = style.id == "native",
             )
         }
         val raw = Vocab.apply(transcription.text.trim(), s.dictionary, s.corrections).trim()
         if (raw.isEmpty()) return PipelineResult("", "", false)
+        // Already English from the translation model; the chat formatter would only paraphrase it
+        if (transcription.translated) return PipelineResult(transcription.sourceText ?: raw, raw, true)
         val prompt = PromptBuilder.formatPrompt(style, raw, s.dictionary)
         val formatted = prompt?.let {
             try { PromptBuilder.cleanModelOutput(api.chat(it), raw) } catch (e: Exception) { null }

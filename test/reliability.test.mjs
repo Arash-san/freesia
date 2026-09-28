@@ -134,3 +134,15 @@ test('stopping during microphone permission releases the late stream', async () 
   assert.equal(stopped, 1);
   dom.window.close();
 });
+
+test('Native Language on the cloud asks the server to translate and skips reformatting', async () => {
+  const { t, dom, calls, window } = await boot({ activeStyle: 'native', nativeLanguage: 'fa' }, {
+    transcribe: async (p) => { calls.transcribe.push(p); return { text: 'Hello from Persian.', engine: 'cloud', translated: true }; }
+  });
+  await t.processAudio(new window.Blob(['x']), 'dictate-inject', { durationSec: 3 });
+  assert.equal(calls.transcribe[0].task, 'translate');
+  assert.equal(calls.transcribe[0].language, 'fa');
+  assert.equal(calls.format.length, 0);
+  assert.deepEqual(calls.inject, ['Hello from Persian.']);
+  dom.window.close();
+});

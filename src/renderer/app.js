@@ -736,6 +736,8 @@ async function processAudio(audioBlob, mode, { existingBase = null, selection = 
         payload.durationSec = wavCache.durationSec;
       }
       if (id === 'gemini') payload.instruction = geminiInstruction(style);
+      // Speak another language, get English: the server translates with a dedicated model
+      if (id === 'cloud' && style.id === 'native' && mode !== 'command') payload.task = 'translate';
       const res = await api.transcribe(payload);
       if (res?.error) { failures.push({ engine: id, ...res.error }); if (res.error.code === 'audio') break; continue; }
       result = res;
@@ -776,7 +778,7 @@ async function processAudio(audioBlob, mode, { existingBase = null, selection = 
   // 3. Format with the chosen style
   setOutput('working', 'Shaping your words…');
   api.overlayProgress?.({ label: 'Formatting' });
-  const formatted = await formatText(raw, mode, { selection, engineUsed: result.engine });
+  const formatted = await formatText(raw, mode, { selection, engineUsed: result.engine, translated: !!result.translated });
   // Second pass: the formatter may reintroduce a spelling the speech model produced
   const finalText = applyVocabulary(formatted.text);
 
@@ -942,7 +944,7 @@ function buildFormatPrompt(rawText, mode, { selection = '', style = getActiveSty
   return `${stylePrompt}${langNote}${noInventions}${dictInstructions}${buildSnippetInstructions()}${toolInstructions}\n\nRaw transcript: "${rawText}"\n\nReturn ONLY the formatted text, nothing else.`;
 }
 
-async function formatText(rawText, mode, { selection = '', engineUsed = '' } = {}) {
+async function formatText(rawText, mode, { selection = '', engineUsed = '', translated = false } = {}) {
   const style = getActiveStyle();
   const formatter = settings.aiFormatting === false && mode !== 'command' ? null : pickFormatter();
   const needsModel = mode === 'command' || style.id !== 'verbatim' || anyToolEnabled();
@@ -951,7 +953,8 @@ async function formatText(rawText, mode, { selection = '', engineUsed = '' } = {
   if (!formatter) {
     return { text: mode === 'command' ? rawText : expandSnippets(rawText), formatter: null };
   }
-  if (style.id === 'native' && engineUsed === 'gemini' && !anyToolEnabled() && mode !== 'command') {
+  // Already translated into English (Gemini, or the cloud translation model)
+  if (style.id === 'native' && (engineUsed === 'gemini' || translated) && !anyToolEnabled() && mode !== 'command') {
     return { text: rawText, formatter: null };
   }
   const prompt = buildFormatPrompt(rawText, mode, { selection, style });

@@ -3,6 +3,16 @@
 Each `## <version>` section becomes the notes of the GitHub release `android-v<version>`
 (see `.github/workflows/android.yml` at the repository root).
 
+## 3.0.2
+
+**Native Language translates much better**
+- Speaking Persian (or another language) with the Native Language style now uses the
+  server's dedicated translation path: a speech model trained for that language, then a
+  translation model, instead of a general chat model rewriting the transcript. On a
+  Persian test set this cut speech errors roughly in half and made the English
+  noticeably more faithful.
+- Servers that do not have the translation path yet keep working as before.
+
 ## 3.0.1
 
 This release makes sure no dictation is ever lost, and adds updates from inside the app.

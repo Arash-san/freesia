@@ -113,13 +113,27 @@ function createCloudEngine({ store, secrets, fetchImpl = (...a) => fetch(...a), 
       const me = await call('/api/me', { timeoutMs: 8000 });
       return { ok: true, latencyMs: Date.now() - t, username: me.username, model: me.asrModel, formattingModel: me.formattingModel };
     },
-    async transcribe({ audio, mime = 'audio/webm', language, prompt, durationSec }) {
-      const form = new FormData();
-      const ext = mime.includes('wav') ? 'wav' : 'webm';
-      form.append('file', new Blob([audio], { type: mime }), `dictation.${ext}`);
-      if (language && language !== 'auto') form.append('language', language);
-      if (prompt) form.append('prompt', prompt.slice(0, 800));
-      const data = await call('/v1/audio/transcriptions', { method: 'POST', body: form, timeoutMs: deadlineFor('cloud', durationSec) });
+    async transcribe({ audio, mime = 'audio/webm', language, prompt, durationSec, task }) {
+      const build = () => {
+        const form = new FormData();
+        const ext = mime.includes('wav') ? 'wav' : 'webm';
+        form.append('file', new Blob([audio], { type: mime }), `dictation.${ext}`);
+        if (language && language !== 'auto') form.append('language', language);
+        if (prompt) form.append('prompt', prompt.slice(0, 800));
+        return form;
+      };
+      // Native Language: the server runs a dedicated speech model for the
+      // language plus a translation model, and returns English directly.
+      if (task === 'translate') {
+        try {
+          const data = await call('/v1/audio/translations', { method: 'POST', body: build(), timeoutMs: deadlineFor('cloud', durationSec) * 2 });
+          return { text: String(data.text || '').trim(), sourceText: data.source_text || '', model: data.model || '', translated: true };
+        } catch (e) {
+          // Older servers have no translation endpoint: transcribe and let the formatter translate
+          if (e.httpStatus !== 404 && e.httpStatus !== 405) throw e;
+        }
+      }
+      const data = await call('/v1/audio/transcriptions', { method: 'POST', body: build(), timeoutMs: deadlineFor('cloud', durationSec) });
       return { text: String(data.text || '').trim(), model: data.model || 'Qwen3-ASR-1.7B' };
     },
     async format(prompt, { temperature = 0.3, timeoutMs = 30000 } = {}) {

@@ -69,6 +69,31 @@ class TranscriptPipelineTest {
         assertTrue(fmt.contains("Preserve these custom words exactly: PyTorch, Claude Opus"))
     }
 
+    @Test fun nativeLanguageUsesTheServerTranslationAndSkipsTheFormatter() {
+        server.enqueue(json(200, """{"text":"We trained it with clodopus.","source_text":"ما با کلود اوپوس آموزشش دادیم","duration":2.4,"model":"MiLMMT"}"""))
+        val s = settings.copy(styleId = "native", nativeLanguage = "fa")
+        val r = pipeline().run(audio, "audio/mp4", 2.4, s)
+        assertEquals("We trained it with Claude Opus.", r.text)
+        assertEquals("ما با کلود اوپوس آموزشش دادیم", r.raw)
+        assertTrue(r.formatted)
+        val req = server.takeRequest()
+        assertEquals("/v1/audio/translations", req.url.encodedPath)
+        assertTrue(req.body!!.utf8().contains("fa"))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun nativeLanguageFallsBackToTranscribeAndFormatOnAnOlderServer() {
+        server.enqueue(json(404, """{"detail":"Not Found"}"""))
+        server.enqueue(json(200, """{"text":"salam"}"""))
+        server.enqueue(chat("Hello"))
+        val s = settings.copy(styleId = "native", nativeLanguage = "fa")
+        val r = pipeline().run(audio, "audio/mp4", 1.0, s)
+        assertEquals("Hello", r.text)
+        assertEquals("/v1/audio/translations", server.takeRequest().url.encodedPath)
+        assertEquals("/v1/audio/transcriptions", server.takeRequest().url.encodedPath)
+        assertEquals("/v1/chat/completions", server.takeRequest().url.encodedPath)
+    }
+
     @Test fun formattingFailureStillReturnsTheRawTranscript() {
         server.enqueue(json(200, """{"text":"hello from the train"}"""))
         server.enqueue(json(502, """{"error":{"message":"The formatting model failed."}}"""))

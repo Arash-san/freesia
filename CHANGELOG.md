@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.1
+
+Native Language translates much better on Freesia Cloud. Instead of a general chat model rewriting the transcript, the server now runs a speech model trained for your language and a dedicated translation model, and returns English directly. On a Persian test set this cut speech errors roughly in half and made the English noticeably more faithful. Servers without the translation path keep working as before.
+
+Fixed: the voice bloom kept animating while Freesia was hidden in the tray, which used CPU for nothing.
+
 ## 3.0.0
 
 Freesia no longer needs a paid API. Three speech engines are available and Freesia falls back between them automatically. Freesia Cloud sends audio to a Freesia Voice server you have an account on, running Qwen3-ASR 1.7B. On this PC downloads a verified llama.cpp Vulkan runtime and Qwen3-ASR weights and transcribes locally on your graphics card or CPU. Google Gemini keeps working with your own key. Your dictionary is now sent to the speech model as vocabulary hints, and a corrector fixes dictionary terms that come out split up or spelled letter by letter. You can teach it corrections from History.

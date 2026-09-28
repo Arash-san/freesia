@@ -615,6 +615,7 @@ ipcMain.handle('engine:transcribe', async (event, payload) => {
       language: payload.language,
       prompt: payload.prompt,
       instruction: payload.instruction,
+      task: payload.task === 'translate' ? 'translate' : undefined,
       durationSec: Number(payload.durationSec) || 0,
       onRetry: (model) => event.sender.send('engine-retry', { engine: 'gemini', model })
     };

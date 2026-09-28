@@ -161,3 +161,24 @@ test('plain dictionary words do not recapitalize ordinary text', () => {
   assert.equal(vocab.apply('the lab is open', ['Lab']), 'the lab is open');
   assert.equal(vocab.apply('Persian: سلام دنیا', ['Lab']), 'Persian: سلام دنیا');
 });
+
+test('Native Language uses the server translation endpoint and falls back on older servers', async () => {
+  const store = memoryStore({ cloud: { server: 'https://voice.example', username: 'a' } });
+  const secrets = memorySecrets();
+  secrets.set('cloud', 'fv_tok');
+  const paths = [];
+  const cloud = createCloudEngine({ store, secrets, fetchImpl: async (url) => {
+    paths.push(new URL(url).pathname);
+    if (url.endsWith('/v1/audio/translations')) return json(200, { text: 'Hello there.', source_text: 'سلام', model: 'Whisper + MiLMMT' });
+    return json(200, { text: 'plain' });
+  } });
+  const out = await cloud.transcribe({ audio: Buffer.from('x'), language: 'fa', task: 'translate' });
+  assert.equal(out.text, 'Hello there.');
+  assert.equal(out.translated, true);
+  assert.deepEqual(paths, ['/v1/audio/translations']);
+
+  const old = createCloudEngine({ store, secrets, fetchImpl: async (url) => url.endsWith('/translations') ? json(404, { error: { message: 'Not Found' } }) : json(200, { text: 'سلام' }) });
+  const fb = await old.transcribe({ audio: Buffer.from('x'), language: 'fa', task: 'translate' });
+  assert.equal(fb.text, 'سلام');
+  assert.equal(fb.translated, undefined);
+});

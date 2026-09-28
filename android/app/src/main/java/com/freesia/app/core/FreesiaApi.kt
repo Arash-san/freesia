@@ -22,7 +22,11 @@ class ApiException(val kind: Kind, message: String, val httpStatus: Int = 0) : E
 data class LoginResult(val username: String, val token: String, val expiresInDays: Int)
 data class UsageDay(val day: String, val requests: Int, val audioSeconds: Double, val llmRequests: Int)
 data class MeInfo(val username: String, val usage: List<UsageDay>, val asrModel: String?, val formattingModel: String?)
-data class Transcription(val text: String, val duration: Double, val model: String?)
+/** [translated] is true when the server already turned the speech into English ([sourceText] is what was said). */
+data class Transcription(
+    val text: String, val duration: Double, val model: String?,
+    val translated: Boolean = false, val sourceText: String? = null,
+)
 data class UploadTimeouts(val connectMs: Long, val writeMs: Long, val readMs: Long, val callMs: Long)
 
 /**
@@ -135,7 +139,14 @@ class FreesiaApi(
         )
     }
 
-    fun transcribe(audio: File, mime: String, language: String?, prompt: String?, durationSec: Double): Transcription {
+    /**
+     * @param translate Native Language: ask /v1/audio/translations for English. Servers
+     *   without that endpoint (404/405) get a plain transcription, which the formatter translates.
+     */
+    fun transcribe(
+        audio: File, mime: String, language: String?, prompt: String?, durationSec: Double,
+        translate: Boolean = false,
+    ): Transcription {
         val ext = when {
             "wav" in mime -> "wav"
             "aac" in mime -> "aac"
@@ -143,11 +154,26 @@ class FreesiaApi(
             "webm" in mime -> "webm"
             else -> "m4a"
         }
-        val form = MultipartBody.Builder().setType(MultipartBody.FORM)
-            .addFormDataPart("file", "dictation.$ext", audio.asRequestBody(mime.toMediaType()))
-        if (!language.isNullOrBlank() && language != "auto") form.addFormDataPart("language", language)
-        if (!prompt.isNullOrBlank()) form.addFormDataPart("prompt", prompt.take(PromptBuilder.MAX_VOCAB_PROMPT))
-        val json = execute(authed("/v1/audio/transcriptions").post(form.build()).build(), uploadTimeouts(durationSec))
+        fun form(): MultipartBody {
+            val form = MultipartBody.Builder().setType(MultipartBody.FORM)
+                .addFormDataPart("file", "dictation.$ext", audio.asRequestBody(mime.toMediaType()))
+            if (!language.isNullOrBlank() && language != "auto") form.addFormDataPart("language", language)
+            if (!prompt.isNullOrBlank()) form.addFormDataPart("prompt", prompt.take(PromptBuilder.MAX_VOCAB_PROMPT))
+            return form.build()
+        }
+        if (translate) {
+            try {
+                // Speech model + translation model on the server: allow for both
+                val json = execute(authed("/v1/audio/translations").post(form()).build(), uploadTimeouts(durationSec * 2))
+                return Transcription(
+                    json.optString("text").trim(), json.optDouble("duration", 0.0), json.optString("model").ifEmpty { null },
+                    translated = true, sourceText = json.optString("source_text").trim().ifEmpty { null },
+                )
+            } catch (e: ApiException) {
+                if (e.httpStatus != 404 && e.httpStatus != 405) throw e
+            }
+        }
+        val json = execute(authed("/v1/audio/transcriptions").post(form()).build(), uploadTimeouts(durationSec))
         return Transcription(json.optString("text").trim(), json.optDouble("duration", 0.0), json.optString("model").ifEmpty { null })
     }
 

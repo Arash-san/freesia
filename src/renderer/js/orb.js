@@ -65,10 +65,23 @@
       ctx.closePath();
     }
 
+    function resume() {
+      if (destroyed || raf) return;
+      if (document.hidden) { document.addEventListener('visibilitychange', resume, { once: true }); return; }
+      last = performance.now();
+      raf = requestAnimationFrame(frame);
+    }
+
     function frame(now) {
       if (destroyed) return;
+      // Hidden (tray, minimized, overlay not shown): stop the loop entirely.
+      // Scheduling frames while hidden kept Freesia burning CPU in the tray.
+      if (document.hidden) {
+        raf = 0;
+        document.addEventListener('visibilitychange', resume, { once: true });
+        return;
+      }
       raf = requestAnimationFrame(frame);
-      if (document.hidden) return;
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       const wall = reduceMotion ? 0 : (now - t0) / 1000;
