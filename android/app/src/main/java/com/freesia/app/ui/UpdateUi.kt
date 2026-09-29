@@ -1,5 +1,15 @@
 package com.freesia.app.ui
 
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import com.freesia.app.ui.theme.Fonts
+import com.freesia.app.core.Markdown
 import com.freesia.app.BuildConfig
 import com.freesia.app.Graph
 import com.freesia.app.update.UpdateState
@@ -63,12 +73,8 @@ fun UpdateCard(modifier: Modifier = Modifier) {
             }
         }
         if (release.notes.isNotBlank()) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                release.notes, style = Type.bodySmall.copy(color = t.ink2),
-                maxLines = if (expanded) Int.MAX_VALUE else 5, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.clickable { expanded = !expanded },
-            )
+            Spacer(Modifier.height(10.dp))
+            ReleaseNotes(release.notes, expanded, onToggle = { expanded = !expanded })
         }
         Spacer(Modifier.height(12.dp))
         when (val s = st) {
@@ -126,3 +132,46 @@ fun UpdateSettingsRow() {
         GhostButton("Check for updates", { Graph.updates.check(userAsked = true) }, enabled = st !is UpdateState.Checking && st !is UpdateState.Downloading)
     }
 }
+
+/**
+ * Release notes rendered from the release's Markdown (headings, lists, bold,
+ * code), not shown as raw text. Collapsed, the first few blocks; tap for all.
+ */
+@Composable
+fun ReleaseNotes(md: String, expanded: Boolean, onToggle: () -> Unit) {
+    val t = LocalFreesia.current
+    val blocks = remember(md) { Markdown.parse(md) }
+    val shown = if (expanded) blocks else blocks.take(COLLAPSED_BLOCKS)
+    fun spans(list: List<Markdown.Span>) = buildAnnotatedString {
+        for (sp in list) {
+            when (sp.kind) {
+                Markdown.Kind.TEXT -> append(sp.text)
+                Markdown.Kind.BOLD -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = t.ink)) { append(sp.text) }
+                Markdown.Kind.ITALIC -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(sp.text) }
+                Markdown.Kind.CODE -> withStyle(SpanStyle(fontFamily = Fonts.mono, background = t.raise2)) { append(sp.text) }
+                Markdown.Kind.LINK -> withStyle(SpanStyle(textDecoration = TextDecoration.Underline)) { append(sp.text) }
+            }
+        }
+    }
+    Column(Modifier.fillMaxWidth().clickable(onClick = onToggle), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        shown.forEach { b ->
+            when (b) {
+                is Markdown.Heading -> Text(spans(b.spans), style = Type.label.copy(color = t.ink), modifier = Modifier.padding(top = 4.dp))
+                is Markdown.Paragraph -> Text(spans(b.spans), style = Type.bodySmall.copy(color = t.ink2))
+                is Markdown.ListBlock -> Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    b.items.forEachIndexed { i, item ->
+                        Row {
+                            Text(if (b.ordered) "${i + 1}." else "•", style = Type.bodySmall.copy(color = t.ink3), modifier = Modifier.width(16.dp))
+                            Text(spans(item), style = Type.bodySmall.copy(color = t.ink2), modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
+        if (blocks.size > COLLAPSED_BLOCKS) {
+            Text(if (expanded) "Show less" else "Show all changes", style = Type.label.copy(color = t.ink3))
+        }
+    }
+}
+
+private const val COLLAPSED_BLOCKS = 3

@@ -329,6 +329,22 @@ body.is-recording .orb-timer { height: 18px; opacity: 1; }
 .banner-text { flex: 1; min-width: 0; }
 .banner-title { font-weight: 560; }
 .banner-desc { font-size: 12.5px; color: var(--ink-3); }
+/* Release notes (rendered from Markdown, never as HTML) */
+.banner:has(.release-notes[open]) { align-items: flex-start; }
+.release-notes { margin-top: 8px; font-size: 12.5px; color: var(--ink-2); }
+.release-notes summary { cursor: pointer; color: var(--ink); font-weight: 520; list-style: none; display: inline-flex; align-items: center; gap: 6px; }
+.release-notes summary::-webkit-details-marker { display: none; }
+.release-notes summary::before { content: ''; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .2s var(--ease-out); }
+.release-notes[open] summary::before { transform: rotate(45deg); }
+.release-notes .md { margin-top: 8px; max-height: 260px; overflow: auto; padding-right: 6px; line-height: 1.55; }
+.release-notes .md > :first-child { margin-top: 0; }
+.release-notes .md h3, .release-notes .md h4, .release-notes .md h5, .release-notes .md h6 { font-size: 12.5px; font-weight: 600; color: var(--ink); margin: 10px 0 4px; }
+.release-notes .md p { margin: 0 0 8px; }
+.release-notes .md ul, .release-notes .md ol { margin: 0 0 8px; padding-left: 18px; }
+.release-notes .md li { margin: 2px 0; }
+.release-notes .md strong { color: var(--ink); font-weight: 600; }
+.release-notes .md code { font-family: var(--font-mono); font-size: 11.5px; padding: 1px 5px; border-radius: 5px; background: var(--raise-2); }
+.release-notes .md .md-link { text-decoration: underline; text-decoration-color: var(--ink-4); }
 .progress { height: 4px; border-radius: 4px; background: var(--raise-3); overflow: hidden; margin-top: 8px; }
 .progress > span { display: block; height: 100%; width: 0; background: var(--bloom-loop); background-size: 200% 100%; border-radius: inherit; transition: width 400ms var(--ease-out); animation: bloom-slide 2s linear infinite; }
 

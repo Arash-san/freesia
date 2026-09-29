@@ -60,4 +60,13 @@ class TextSpliceTest {
         assertEquals(4, Words.count("Hello, it's me, again!"))
         assertEquals(2, Words.count("سلام دنیا"))
     }
+
+    @Test fun telegramsPlaceholderIsRecognisedOnceTheFieldShowsItAsHint() {
+        // Empty Telegram field: text "Message", no hint. After inserting, the hint is "Message".
+        assertEquals(true, TextSplice.wasPlaceholder("Message", "Message"))
+        // Real text, or a field whose hint differs from what it held: keep it
+        assertEquals(false, TextSplice.wasPlaceholder("Message", null))
+        assertEquals(false, TextSplice.wasPlaceholder("see you soon", "Message"))
+        assertEquals(false, TextSplice.wasPlaceholder("", ""))
+    }
 }

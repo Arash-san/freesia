@@ -373,6 +373,18 @@ fi
 adb shell input keyevent KEYCODE_HOME; sleep 2
 f="$(bubble_flags)"; [[ -z "$f" || "$f" == *NOT_TOUCHABLE* ]] && ok "bubble hides when no field is focused" || bad "bubble still visible on home screen ($f)"
 
+# Tablet layout: the same app on a 10" landscape screen (navigation rail, two-column Home)
+adb shell wm size 2560x1600; adb shell wm density 320; sleep 3
+adb shell am start -W -n $PKG/.ui.MainActivity > /dev/null; sleep 3
+tap_where "n.get('content-desc')=='Home'" || tap_where "n.get('text')=='Home'"; sleep 2
+dump; if [[ "$(count_of "n.get('content-desc')=='History' or n.get('text')=='History'")" -gt 0 ]]; then ok "tablet: navigation shows"; else bad "tablet: navigation missing"; fi
+shot 30_tablet_home
+tap_where "n.get('content-desc')=='History'" || tap_where "n.get('text')=='History'"; sleep 2; shot 31_tablet_history
+tap_where "n.get('content-desc')=='Settings'" || tap_where "n.get('text')=='Settings'"; sleep 2; shot 32_tablet_settings
+tap_where "n.get('content-desc')=='Home'" || tap_where "n.get('text')=='Home'"; sleep 2
+adb shell wm size 1600x2560; sleep 3; shot 33_tablet_portrait_home
+adb shell wm size reset; adb shell wm density reset; sleep 2
+
 timeout 60 adb logcat -d > "$OUT/logcat.txt"
 if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt" && grep -A3 "FATAL EXCEPTION" "$OUT/logcat.txt" | grep -q "$PKG"; then
   bad "crash in logcat"; grep -A25 "FATAL EXCEPTION" "$OUT/logcat.txt" | head -60

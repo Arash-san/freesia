@@ -38,6 +38,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # The app shows these notes ("What's new") when it offers the update
+      - name: Release notes from CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '$0 == "## " v {f=1; next} /^## / {f=0} f' CHANGELOG.md > release-notes.md
+          if [ -s release-notes.md ]; then
+            gh release edit "$GITHUB_REF_NAME" --title "Freesia $v" --notes-file release-notes.md
+          else
+            echo "::warning::CHANGELOG.md has no section for $v"
+          fi
+
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         with:

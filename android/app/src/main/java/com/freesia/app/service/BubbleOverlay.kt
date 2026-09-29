@@ -88,6 +88,8 @@ class BubbleOverlay(
     private val context: Context,
     private val onTap: () -> Unit,
     private val onLongPress: () -> Unit,
+    /** Retry / Undo / cancel / Translate beside the bubble; follows it around. */
+    private val chips: BubbleChips,
 ) {
     private val wm = context.getSystemService(WindowManager::class.java)
     private val density = context.resources.displayMetrics.density
@@ -154,12 +156,14 @@ class BubbleOverlay(
         pressed = false
         setTouchable(false)
         hidePicker()
+        chips.display(false)
     }
 
     fun destroy() {
         handler.removeCallbacksAndMessages(null)
         snapAnim?.cancel()
         hidePicker()
+        chips.destroy()
         if (attached) try { wm.removeViewImmediate(root) } catch (e: Exception) { }
         attached = false
         owner.destroy()
@@ -225,6 +229,16 @@ class BubbleOverlay(
 
     private fun update() {
         if (attached) try { wm.updateViewLayout(root, params) } catch (e: Exception) { }
+        placeChips()
+    }
+
+    private fun placeChips() {
+        if (!attached) return
+        val (sw, _) = screen()
+        val side = Graph.settings.value.bubbleSide
+        val gap = if (side == 0) params.x + winPx - padPx else sw - (params.x + padPx)
+        chips.place(side, gap, params.y + winPx / 2)
+        chips.display(visible && !dragging)
     }
 
     private fun haptic(kind: Int) {
@@ -293,6 +307,7 @@ class BubbleOverlay(
                         dragging = true
                         pressed = false
                         handler.removeCallbacks(longPress)
+                        chips.display(false)
                     }
                     if (dragging) {
                         params.x = startX + dx.roundToInt()

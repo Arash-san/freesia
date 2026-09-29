@@ -186,7 +186,7 @@
 
           <div class="banner bloom" id="updateBanner" hidden>
             <span class="banner-icon"><svg><use href="#i-download"/></svg></span>
-            <span class="banner-text"><span class="banner-title" id="updateBannerTitle">Update available</span><span class="banner-desc" id="updateBannerDesc" style="display:block"></span><span class="progress" id="updateBannerProgress" hidden><span></span></span></span>
+            <span class="banner-text"><span class="banner-title" id="updateBannerTitle">Update available</span><span class="banner-desc" id="updateBannerDesc" style="display:block"></span><span class="progress" id="updateBannerProgress" hidden><span></span></span><details class="release-notes" id="updateBannerNotes" hidden><summary>What's new</summary><div class="md"></div></details></span>
             <button class="btn btn-primary btn-sm" id="btnHomeUpdate">Download</button>
           </div>
           <div class="banner warn" id="recoveryBanner" hidden>
@@ -445,7 +445,7 @@
           <div class="section-title">About</div>
           <div class="rows">
             <div class="row">
-              <span class="row-text"><span class="row-title" id="appVersionLabel">Freesia</span><span class="row-desc" style="display:block" id="updateStatusText">Update checks are ready.</span><span class="progress" id="updateProgress" hidden><span id="updateProgressBar"></span></span></span>
+              <span class="row-text"><span class="row-title" id="appVersionLabel">Freesia</span><span class="row-desc" style="display:block" id="updateStatusText">Update checks are ready.</span><span class="progress" id="updateProgress" hidden><span id="updateProgressBar"></span></span><details class="release-notes" id="settingsUpdateNotes" hidden><summary>What's new</summary><div class="md"></div></details></span>
               <button class="btn btn-secondary btn-sm" id="btnCheckUpdates"><svg><use href="#i-refresh"/></svg>Check</button>
               <button class="btn btn-primary btn-sm" id="btnDownloadUpdate" hidden>Download</button>
               <button class="btn btn-bloom btn-sm" id="btnInstallUpdate" hidden>Restart to update</button>
@@ -474,6 +474,7 @@
   <script src="js/ui.js"></script>
   <script src="js/audio.js"></script>
   <script src="js/vocab.js"></script>
+  <script src="js/markdown.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

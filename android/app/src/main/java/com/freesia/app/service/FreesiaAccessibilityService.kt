@@ -1,6 +1,7 @@
 package com.freesia.app.service
 
 import com.freesia.app.Graph
+import com.freesia.app.data.toggledTranslate
 import com.freesia.app.dictation.Delivery
 import com.freesia.app.dictation.DictationTarget
 import com.freesia.app.dictation.Origin
@@ -46,7 +47,15 @@ class FreesiaAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        bubble = BubbleOverlay(this, onTap = ::onBubbleTap, onLongPress = ::onBubbleLongPress)
+        val chips = BubbleChips(
+            this,
+            onRetry = ::onChipRetry,
+            onUndo = { Graph.dictation.undoLast(); bubble.hapticConfirm() },
+            onCancel = { Graph.dictation.cancel(); bubble.hapticReject() },
+            onToggleTranslate = { Graph.settings.update { it.toggledTranslate() }; bubble.hapticConfirm() },
+            onDismissSaved = { Graph.dictation.dismissSaved() },
+        )
+        bubble = BubbleOverlay(this, onTap = ::onBubbleTap, onLongPress = ::onBubbleLongPress, chips = chips)
         _running.value = true
         scope.launch {
             Graph.settings.flow.distinctUntilChangedBy { Triple(it.bubbleSizeDp, it.hiddenApps, it.bubbleOpacity) }.collect {
@@ -197,6 +206,14 @@ class FreesiaAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Retry beside the bubble: the saved take goes into the field in front of the user. */
+    private fun onChipRetry() {
+        val d = Graph.dictation
+        val id = d.state.value.savedRecordingId ?: return
+        val node = focusedNode
+        if (node != null && !node.isPassword) d.retryInto(id, NodeTarget(node, focusedPackage)) else d.retry(id)
+    }
+
     private fun onBubbleLongPress() {
         if (Graph.dictation.state.value.phase == Phase.RECORDING) { Graph.dictation.cancel(); return }
         val pkg = focusedPackage
@@ -211,7 +228,11 @@ class FreesiaAccessibilityService : AccessibilityService() {
     /** The field that had focus when recording started; focus may move while we transcribe. */
     private inner class NodeTarget(private val node: AccessibilityNodeInfo, override val appPackage: String?) : DictationTarget {
         override val origin = Origin.BUBBLE
-        override suspend fun deliver(text: String): Delivery = TextInserter.insert(this@FreesiaAccessibilityService, node, text)
+        private var edit: TextInserter.Edit? = null
+        override suspend fun deliver(text: String): Delivery =
+            TextInserter.insert(this@FreesiaAccessibilityService, node, text) { edit = it }
+        override suspend fun undo(): Boolean =
+            edit?.let { TextInserter.undo(this@FreesiaAccessibilityService, node, it) }?.also { if (it) edit = null } ?: false
     }
 
     override fun onInterrupt() = Unit

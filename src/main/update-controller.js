@@ -1,7 +1,7 @@
 // Keep a downloaded installer usable while checking for a newer release.
 // Dependency injection lets the full lifecycle run in tests without installing.
 function createUpdateController({ updater, publish, packaged, beforeInstall, installFailed = () => {}, canInstall = () => true,
-  now = Date.now, timers = globalThis }) {
+  now = Date.now, timers = globalThis, fetchNotes = null }) {
   let state = { status: 'idle', message: 'Check for updates.' };
   let downloaded = null;
   let operation = null;
@@ -12,7 +12,18 @@ function createUpdateController({ updater, publish, packaged, beforeInstall, ins
     publish(status, state);
     return state;
   };
-  const infoOnly = info => ({ version: info.version, releaseDate: info.releaseDate });
+  const notes = new Map();
+  const infoOnly = info => ({ version: info.version, releaseDate: info.releaseDate, notes: notes.get(info.version) || '' });
+  // Release notes arrive after the version: add them to the state when they do
+  const loadNotes = version => {
+    if (!fetchNotes || notes.has(version)) return;
+    notes.set(version, '');
+    Promise.resolve(fetchNotes(version)).then(text => {
+      if (!text) { notes.delete(version); return; }
+      notes.set(version, text);
+      if (state.updateInfo?.version === version) emit(state.status, { updateInfo: { ...state.updateInfo, notes: text } });
+    }).catch(() => notes.delete(version));
+  };
   updater.autoDownload = false;
   updater.autoInstallOnAppQuit = false; // Installation requires the user's confirmation.
   updater.on('update-available', info => {
@@ -22,6 +33,7 @@ function createUpdateController({ updater, publish, packaged, beforeInstall, ins
       updateInfo: infoOnly(info), progress: ready ? { percent: 100 } : null,
       message: ready ? `Version ${info.version} is ready. Restart to install.` : `Version ${info.version} is available.`
     });
+    loadNotes(info.version);
   });
   updater.on('update-not-available', () => {
     downloaded = null;

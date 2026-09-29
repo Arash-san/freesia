@@ -40,6 +40,15 @@ object TextSplice {
         return Result(text, start + piece.length, piece)
     }
 
+    /**
+     * True when what we read as the field's text before inserting was really its
+     * placeholder. Telegram draws its own "Message" hint and reports it as the text
+     * of an empty field (with no hint); once the field holds text it reports
+     * "Message" as the hint. So: the old "text" equals the hint the field shows now.
+     */
+    fun wasPlaceholder(before: String, hintAfter: CharSequence?): Boolean =
+        before.isNotEmpty() && hintAfter != null && hintAfter.toString() == before
+
     /** The value a field really holds: fields showing their hint report the hint as text. */
     fun realFieldText(text: CharSequence?, hint: CharSequence?, showingHint: Boolean): String {
         if (showingHint) return ""

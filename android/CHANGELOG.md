@@ -3,6 +3,29 @@
 Each `## <version>` section becomes the notes of the GitHub release `android-v<version>`
 (see `.github/workflows/android.yml` at the repository root).
 
+## 3.0.3
+
+**Retry and Undo right next to the bubble**
+- When a take can't be transcribed, a **Retry** button appears beside the bubble. It
+  sends the saved recording again and puts the text into the same field.
+- Just after text is inserted, **Undo** appears for a few seconds and takes it back out.
+- While recording, the bubble shows the time, a **✕** to cancel, and a
+  **Translate** switch: turn it on to get English, off to keep what you said in your
+  own language.
+
+**Better with other languages**
+- Speaking English with the Native Language style no longer produces a strange
+  "translation". Freesia now notices the language you actually spoke.
+- In the other styles, Persian stays Persian and uses a speech model made for Persian.
+
+**Fixes**
+- Telegram (and apps like it): the word "Message" no longer appears in front of your text.
+- Update notes are shown formatted instead of as raw text.
+
+**Tablets**
+- A side navigation rail on large screens, a two-column Home in landscape, and
+  content kept to a comfortable reading width.
+
 ## 3.0.2
 
 **Native Language translates much better**

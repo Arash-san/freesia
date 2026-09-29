@@ -1,5 +1,6 @@
 const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, clipboard, nativeImage, shell, nativeTheme, screen, dialog, powerMonitor } = require('electron');
 const { createUpdateController } = require('./update-controller');
+const { createReleaseNotes } = require('./release-notes');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
@@ -179,7 +180,8 @@ function setupAutoUpdater() {
     updater: autoUpdater, publish: sendUpdateStatus, packaged: app.isPackaged,
     canInstall: () => !isRecording && !isProcessing,
     beforeInstall: () => { app.isQuitting = true; },
-    installFailed: () => { app.isQuitting = false; }
+    installFailed: () => { app.isQuitting = false; },
+    fetchNotes: createReleaseNotes()
   });
   updateController.start();
   powerMonitor.on('resume', () => updateController.check());

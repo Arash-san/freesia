@@ -165,9 +165,10 @@ class FreesiaApi(
             try {
                 // Speech model + translation model on the server: allow for both
                 val json = execute(authed("/v1/audio/translations").post(form()).build(), uploadTimeouts(durationSec * 2))
+                // translated=false: the speaker used English, so the text is a plain transcript to format
                 return Transcription(
                     json.optString("text").trim(), json.optDouble("duration", 0.0), json.optString("model").ifEmpty { null },
-                    translated = true, sourceText = json.optString("source_text").trim().ifEmpty { null },
+                    translated = json.optBoolean("translated", true), sourceText = json.optString("source_text").trim().ifEmpty { null },
                 )
             } catch (e: ApiException) {
                 if (e.httpStatus != 404 && e.httpStatus != 405) throw e

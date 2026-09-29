@@ -16,6 +16,8 @@ data class AppSettings(
     val server: String = "",
     val username: String = "",
     val styleId: String = "normal",
+    /** The style the bubble's "Translate" switch goes back to when turned off. */
+    val plainStyleId: String = "normal",
     val dictionary: List<String> = emptyList(),
     /** Taught fixes ("Freesia wrote" -> "I actually said"), applied before and after formatting. */
     val corrections: List<Correction> = emptyList(),
@@ -110,6 +112,7 @@ class SettingsStore(context: Context) {
             server = prefs.getString("server", d.server) ?: d.server,
             username = prefs.getString("username", "") ?: "",
             styleId = prefs.getString("styleId", d.styleId) ?: d.styleId,
+            plainStyleId = prefs.getString("plainStyleId", d.plainStyleId) ?: d.plainStyleId,
             dictionary = dict,
             corrections = corrections,
             language = prefs.getString("language", d.language) ?: d.language,
@@ -133,6 +136,7 @@ class SettingsStore(context: Context) {
         putString("server", s.server)
         putString("username", s.username)
         putString("styleId", s.styleId)
+        putString("plainStyleId", s.plainStyleId)
         putString("dictionary", JSONArray(s.dictionary).toString())
         putString(
             "corrections",
@@ -154,3 +158,13 @@ class SettingsStore(context: Context) {
         putFloat("bubbleY", s.bubbleY)
     }
 }
+
+/**
+ * The bubble's "Translate" switch: Native Language on, or back to the style used
+ * before it (so Persian can be written as Persian or turned into English per take).
+ */
+fun AppSettings.toggledTranslate(): AppSettings =
+    if (styleId == NATIVE_STYLE) copy(styleId = plainStyleId.takeIf { it != NATIVE_STYLE } ?: "normal")
+    else copy(styleId = NATIVE_STYLE, plainStyleId = styleId)
+
+const val NATIVE_STYLE = "native"

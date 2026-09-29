@@ -1,5 +1,11 @@
 package com.freesia.app.ui
 
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.platform.LocalConfiguration
 import com.freesia.app.Graph
 import com.freesia.app.core.TextSplice
 import com.freesia.app.dictation.Delivery
@@ -141,8 +147,15 @@ fun AppRoot() {
     val signedIn by Graph.tokens.signedIn.collectAsState()
     Box(Modifier.fillMaxSize().background(t.bg)) {
         when {
-            !s.onboarded -> Onboarding(onDone = { Graph.settings.update { it.copy(onboarded = true) } })
-            !signedIn -> SignInScreen(modifier = Modifier.fillMaxSize(), standalone = true, onSignedIn = {})
+            // Setup screens stay phone-width, centred, on tablets
+            !s.onboarded -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                Box(Modifier.fillMaxHeight().widthIn(max = 560.dp)) {
+                    Onboarding(onDone = { Graph.settings.update { it.copy(onboarded = true) } })
+                }
+            }
+            !signedIn -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                SignInScreen(modifier = Modifier.fillMaxHeight().widthIn(max = 560.dp), standalone = true, onSignedIn = {})
+            }
             else -> MainTabs()
         }
     }
@@ -156,27 +169,48 @@ private fun MainTabs() {
     LaunchedEffect(requested) { requested?.let { tab = it.ordinal; Nav.consumed() } }
     val recs by Graph.recordings.items.collectAsState()
     val waiting = recs.count { it.needsRetry }
-    Column(Modifier.fillMaxSize()) {
+    // Tablets and unfolded foldables: a navigation rail on the side instead of the bottom bar
+    val wide = LocalConfiguration.current.screenWidthDp >= 600
+    val content: @Composable (Modifier) -> Unit = { modifier ->
         AnimatedContent(
             targetState = Tab.entries[tab],
             transitionSpec = {
                 (fadeIn(spring(stiffness = 500f)) + slideInVertically(spring(dampingRatio = 0.8f, stiffness = 420f)) { it / 24 })
                     .togetherWith(fadeOut(spring(stiffness = 900f)))
             },
-            modifier = Modifier.weight(1f),
+            modifier = modifier,
             label = "tabs",
         ) { current ->
-            when (current) {
-                Tab.HOME -> HomeScreen(
+            if (current == Tab.HOME) {
+                HomeScreen(
                     onOpenStyles = { tab = Tab.STYLES.ordinal }, onOpenSettings = { tab = Tab.SETTINGS.ordinal },
                     onOpenSaved = { tab = Tab.HISTORY.ordinal },
                 )
-                Tab.HISTORY -> HistoryScreen()
-                Tab.STYLES -> StylesScreen()
-                Tab.WORDS -> VocabularyScreen()
-                Tab.SETTINGS -> SettingsScreen()
+            } else {
+                // Lists and forms read best at a phone-like width, centred on a tablet
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                    Box(Modifier.fillMaxHeight().widthIn(max = 720.dp)) {
+                        when (current) {
+                            Tab.HISTORY -> HistoryScreen()
+                            Tab.STYLES -> StylesScreen()
+                            Tab.WORDS -> VocabularyScreen()
+                            else -> SettingsScreen()
+                        }
+                    }
+                }
             }
         }
+    }
+    if (wide) {
+        Row(Modifier.fillMaxSize()) {
+            NavRail(tab, waiting) { tab = it }
+            Box(Modifier.width(1.dp).fillMaxHeight().background(t.line))
+            content(Modifier.weight(1f).fillMaxHeight())
+        }
+        return
+    }
+    Column(Modifier.fillMaxSize()) {
+        content(Modifier.weight(1f))
         Hairline()
         Row(
             Modifier.fillMaxWidth().background(t.bg).navigationBarsPadding().padding(horizontal = 8.dp, vertical = 6.dp),
@@ -207,6 +241,44 @@ private fun MainTabs() {
                     )
                     Text(item.label, style = Type.eyebrow.copy(color = if (selected) t.ink else t.ink3), maxLines = 1)
                 }
+            }
+        }
+    }
+}
+
+/** The side navigation on tablets: same items, badge and bloom indicator as the bottom bar. */
+@Composable
+private fun NavRail(tab: Int, waiting: Int, onSelect: (Int) -> Unit) {
+    val t = LocalFreesia.current
+    Column(
+        Modifier.fillMaxHeight().width(96.dp).background(t.bg).statusBarsPadding().navigationBarsPadding().padding(vertical = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            Modifier.size(12.dp).clip(CircleShape).background(bloomBrush(t.bloom)),
+        )
+        Spacer(Modifier.height(18.dp))
+        Tab.entries.forEach { item ->
+            val selected = item.ordinal == tab
+            Column(
+                Modifier.width(80.dp).clip(RoundedCornerShape(16.dp))
+                    .background(if (selected) t.raise2 else Color.Transparent)
+                    .clickable { onSelect(item.ordinal) }
+                    .padding(vertical = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box {
+                    Icon(item.icon, item.label, tint = if (selected) t.ink else t.ink3, modifier = Modifier.size(24.dp))
+                    if (item == Tab.HISTORY && waiting > 0) {
+                        Box(
+                            Modifier.align(Alignment.TopEnd).offset(x = 5.dp, y = (-3).dp).size(9.dp).clip(CircleShape)
+                                .background(t.bad).semantics { contentDescription = "$waiting saved recordings waiting" },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(item.label, style = Type.eyebrow.copy(color = if (selected) t.ink else t.ink3), maxLines = 1)
             }
         }
     }

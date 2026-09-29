@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.2
+
+**What's new is shown with each update.** When a new version is available, the update banner and Settings have a "What's new" section with that version's changes, formatted.
+
+**Native Language understands English.** If you speak English while the Native Language style is on, Freesia now formats what you said instead of running it through the translator, which could garble it. The server notices which language you actually spoke.
+
+**Persian in the other styles.** With the language set to Auto, Persian speech is recognised by a speech model made for Persian and stays in Persian.
+
 ## 3.0.1
 
 Native Language translates much better on Freesia Cloud. Instead of a general chat model rewriting the transcript, the server now runs a speech model trained for your language and a dedicated translation model, and returns English directly. On a Persian test set this cut speech errors roughly in half and made the English noticeably more faithful. Servers without the translation path keep working as before.

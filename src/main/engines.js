@@ -127,7 +127,7 @@ function createCloudEngine({ store, secrets, fetchImpl = (...a) => fetch(...a), 
       if (task === 'translate') {
         try {
           const data = await call('/v1/audio/translations', { method: 'POST', body: build(), timeoutMs: deadlineFor('cloud', durationSec) * 2 });
-          return { text: String(data.text || '').trim(), sourceText: data.source_text || '', model: data.model || '', translated: true };
+          return { text: String(data.text || '').trim(), sourceText: data.source_text || '', model: data.model || '', translated: data.translated !== false };
         } catch (e) {
           // Older servers have no translation endpoint: transcribe and let the formatter translate
           if (e.httpStatus !== 404 && e.httpStatus !== 405) throw e;

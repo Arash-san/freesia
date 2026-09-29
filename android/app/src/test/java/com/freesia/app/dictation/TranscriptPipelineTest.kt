@@ -82,6 +82,16 @@ class TranscriptPipelineTest {
         assertEquals(1, server.requestCount)
     }
 
+    @Test fun englishSpeechInNativeLanguageIsFormattedNotTranslated() {
+        server.enqueue(json(200, """{"text":"so um i said this in english","translated":false,"language":"en"}"""))
+        server.enqueue(chat("So I said this in English."))
+        val s = settings.copy(styleId = "native", nativeLanguage = "fa")
+        val r = pipeline().run(audio, "audio/mp4", 2.0, s)
+        assertEquals("So I said this in English.", r.text)
+        assertEquals("/v1/audio/translations", server.takeRequest().url.encodedPath)
+        assertEquals("/v1/chat/completions", server.takeRequest().url.encodedPath)
+    }
+
     @Test fun nativeLanguageFallsBackToTranscribeAndFormatOnAnOlderServer() {
         server.enqueue(json(404, """{"detail":"Not Found"}"""))
         server.enqueue(json(200, """{"text":"salam"}"""))

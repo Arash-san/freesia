@@ -1,5 +1,10 @@
 package com.freesia.app.ui
 
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import com.freesia.app.Graph
 import com.freesia.app.core.ApiException
 import com.freesia.app.core.MeInfo
@@ -112,135 +117,176 @@ fun HomeScreen(onOpenStyles: () -> Unit, onOpenSettings: () -> Unit, onOpenSaved
         }
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(horizontal = 20.dp)) {
-        Spacer(Modifier.height(18.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Eyebrow("Freesia")
-                Heading("Speak, *softly*.", style = Type.title)
+    // Phones: one column. Tablets: the orb on the left, the pad and status on the
+    // right; the orb is sized by the screen height so it never outgrows the view.
+    BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding()) {
+        val wide = maxWidth >= 840.dp
+        val orbSize = Modifier.widthIn(max = if (wide) minOf(maxHeight * 0.62f, 520.dp) else minOf(maxHeight * 0.55f, 460.dp))
+        val headerPart: @Composable ColumnScope.() -> Unit = {
+            Spacer(Modifier.height(18.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Eyebrow("Freesia")
+                    Heading("Speak, *softly*.", style = Type.title)
+                }
+                Chip("${style.icon}  ${style.name}", selected = false, onClick = onOpenStyles)
             }
-            Chip("${style.icon}  ${style.name}", selected = false, onClick = onOpenStyles)
+
         }
+        val bannersPart: @Composable ColumnScope.() -> Unit = {
+            // A new version of Freesia (downloads only when tapped)
+            UpdateCard(Modifier.padding(top = 14.dp))
 
-        // A new version of Freesia (downloads only when tapped)
-        UpdateCard(Modifier.padding(top = 14.dp))
-
-        // Saved recordings waiting for a retry
-        if (waiting > 0) {
-            Spacer(Modifier.height(14.dp))
-            FCard(Modifier.fillMaxWidth().clickable(onClick = onOpenSaved), highlighted = true, padding = androidx.compose.foundation.layout.PaddingValues(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    androidx.compose.material3.Icon(FIcons.wave, null, tint = t.ink, modifier = Modifier.size(22.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            if (waiting == 1) "1 saved recording is waiting" else "$waiting saved recordings are waiting",
-                            style = Type.label.copy(color = t.ink),
-                        )
-                        Text("They could not be transcribed. The audio is safe on this phone. Tap to retry.", style = Type.bodySmall.copy(color = t.ink3))
+            // Saved recordings waiting for a retry
+            if (waiting > 0) {
+                Spacer(Modifier.height(14.dp))
+                FCard(Modifier.fillMaxWidth().clickable(onClick = onOpenSaved), highlighted = true, padding = androidx.compose.foundation.layout.PaddingValues(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        androidx.compose.material3.Icon(FIcons.wave, null, tint = t.ink, modifier = Modifier.size(22.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                if (waiting == 1) "1 saved recording is waiting" else "$waiting saved recordings are waiting",
+                                style = Type.label.copy(color = t.ink),
+                            )
+                            Text("They could not be transcribed. The audio is safe on this phone. Tap to retry.", style = Type.bodySmall.copy(color = t.ink3))
+                        }
+                        androidx.compose.material3.Icon(FIcons.arrow, null, tint = t.ink3, modifier = Modifier.size(18.dp))
                     }
-                    androidx.compose.material3.Icon(FIcons.arrow, null, tint = t.ink3, modifier = Modifier.size(18.dp))
+                }
+            }
+
+        }
+        val orbPart: @Composable ColumnScope.() -> Unit = {
+            // The orb
+            Box(
+                Modifier.fillMaxWidth().then(orbSize).aspectRatio(1f).align(Alignment.CenterHorizontally)
+                    .semantics { contentDescription = if (phase == Phase.RECORDING) "Stop dictation" else "Start dictation" }
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { toggle() },
+                contentAlignment = Alignment.Center,
+            ) {
+                BloomOrb(phase.orb(), if (phase == Phase.RECORDING) level else 0f, t.bloom, Modifier.fillMaxSize())
+            }
+            AnimatedContent(
+                targetState = when {
+                    mine && phase == Phase.ERROR -> st.message ?: "Something went wrong."
+                    mine && phase == Phase.SAVED -> st.message ?: "Saved. Retry it from History."
+                    phase == Phase.RECORDING -> "Listening… tap to finish"
+                    phase == Phase.PROCESSING -> st.message ?: "Transcribing…"
+                    phase == Phase.DONE -> "Done"
+                    else -> "Tap the bloom to dictate here"
+                },
+                transitionSpec = { fadeIn().togetherWith(fadeOut()) },
+                modifier = Modifier.fillMaxWidth(),
+                label = "status",
+            ) { msg ->
+                Text(msg, style = Type.body.copy(color = if (phase == Phase.ERROR) t.bad else t.ink2), modifier = Modifier.fillMaxWidth(),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+        }
+        val scratchPart: @Composable ColumnScope.() -> Unit = {
+            // Scratch box
+            FCard(padding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 6.dp, top = 12.dp, bottom = 6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Eyebrow("Scratch pad", Modifier.weight(1f))
+                    IconAction(FIcons.copy, "Copy", {
+                        val text = Scratch.value.text
+                        if (text.isNotBlank()) {
+                            ctx.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Freesia", text))
+                            Toast.makeText(ctx, "Copied", Toast.LENGTH_SHORT).show()
+                        }
+                    })
+                    IconAction(FIcons.close, "Clear", { Scratch.value = TextFieldValue("") })
+                }
+                BasicTextField(
+                    value = Scratch.value, onValueChange = { Scratch.value = it },
+                    textStyle = Type.body.copy(color = t.ink),
+                    cursorBrush = SolidColor(t.bloom[1]),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(end = 10.dp, bottom = 10.dp, top = 4.dp),
+                    decorationBox = { inner ->
+                        if (Scratch.value.text.isEmpty()) Text("Your words land here. Edit, then copy.", style = Type.body.copy(color = t.ink4))
+                        inner()
+                    },
+                )
+            }
+        }
+        val statsPart: @Composable ColumnScope.() -> Unit = {
+            // Stats + status
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                FCard(Modifier.weight(1f)) {
+                    Eyebrow("Today")
+                    Spacer(Modifier.height(6.dp))
+                    MonoNumber(NumberFormat.getIntegerInstance().format(stats.wordsToday))
+                    Text("words dictated", style = Type.bodySmall.copy(color = t.ink3))
+                }
+                FCard(Modifier.weight(1f)) {
+                    Eyebrow("All time")
+                    Spacer(Modifier.height(6.dp))
+                    MonoNumber(NumberFormat.getIntegerInstance().format(stats.wordsTotal))
+                    Text("${stats.dictations} dictations", style = Type.bodySmall.copy(color = t.ink3))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            FCard {
+                Eyebrow("Engine")
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    StatusDot(engineError == null && me != null)
+                    Text(
+                        when {
+                            engineError != null -> engineError!!
+                            me != null -> "Freesia Cloud · connected"
+                            else -> "Checking…"
+                        },
+                        style = Type.body.copy(color = t.ink), modifier = Modifier.weight(1f),
+                    )
+                    latency?.takeIf { engineError == null }?.let { Text("$it ms", style = Type.eyebrow.copy(color = t.ink3)) }
+                }
+                Text(
+                    listOfNotNull(s.username.ifBlank { me?.username ?: "" }.ifBlank { null }, s.server.removePrefix("https://").ifBlank { null }, me?.asrModel)
+                        .joinToString(" · "),
+                    style = Type.bodySmall.copy(color = t.ink3),
+                )
+                Spacer(Modifier.height(10.dp))
+                Hairline()
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    StatusDot(bubbleOn)
+                    Text(if (bubbleOn) "Bubble is on in other apps" else "Bubble is off", style = Type.body.copy(color = t.ink), modifier = Modifier.weight(1f))
+                    if (!bubbleOn) GhostButton("Turn on", { openAccessibilitySettings(ctx) })
                 }
             }
         }
-
-        // The orb
-        Box(
-            Modifier.fillMaxWidth().aspectRatio(1f)
-                .semantics { contentDescription = if (phase == Phase.RECORDING) "Stop dictation" else "Start dictation" }
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { toggle() },
-            contentAlignment = Alignment.Center,
-        ) {
-            BloomOrb(phase.orb(), if (phase == Phase.RECORDING) level else 0f, t.bloom, Modifier.fillMaxSize())
-        }
-        AnimatedContent(
-            targetState = when {
-                mine && phase == Phase.ERROR -> st.message ?: "Something went wrong."
-                mine && phase == Phase.SAVED -> st.message ?: "Saved. Retry it from History."
-                phase == Phase.RECORDING -> "Listening… tap to finish"
-                phase == Phase.PROCESSING -> st.message ?: "Transcribing…"
-                phase == Phase.DONE -> "Done"
-                else -> "Tap the bloom to dictate here"
-            },
-            transitionSpec = { fadeIn().togetherWith(fadeOut()) },
-            modifier = Modifier.fillMaxWidth(),
-            label = "status",
-        ) { msg ->
-            Text(msg, style = Type.body.copy(color = if (phase == Phase.ERROR) t.bad else t.ink2), modifier = Modifier.fillMaxWidth(),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        }
-        Spacer(Modifier.height(18.dp))
-
-        // Scratch box
-        FCard(padding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 6.dp, top = 12.dp, bottom = 6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Eyebrow("Scratch pad", Modifier.weight(1f))
-                IconAction(FIcons.copy, "Copy", {
-                    val text = Scratch.value.text
-                    if (text.isNotBlank()) {
-                        ctx.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Freesia", text))
-                        Toast.makeText(ctx, "Copied", Toast.LENGTH_SHORT).show()
-                    }
-                })
-                IconAction(FIcons.close, "Clear", { Scratch.value = TextFieldValue("") })
+        if (wide) {
+            Row(Modifier.fillMaxSize().padding(horizontal = 32.dp), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
+                Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())) {
+                    headerPart()
+                    bannersPart()
+                    Spacer(Modifier.height(12.dp))
+                    orbPart()
+                    Spacer(Modifier.height(28.dp))
+                }
+                Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())) {
+                    Spacer(Modifier.height(24.dp))
+                    scratchPart()
+                    Spacer(Modifier.height(14.dp))
+                    statsPart()
+                    Spacer(Modifier.height(28.dp))
+                }
             }
-            BasicTextField(
-                value = Scratch.value, onValueChange = { Scratch.value = it },
-                textStyle = Type.body.copy(color = t.ink),
-                cursorBrush = SolidColor(t.bloom[1]),
-                modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(end = 10.dp, bottom = 10.dp, top = 4.dp),
-                decorationBox = { inner ->
-                    if (Scratch.value.text.isEmpty()) Text("Your words land here. Edit, then copy.", style = Type.body.copy(color = t.ink4))
-                    inner()
-                },
-            )
-        }
-        Spacer(Modifier.height(14.dp))
-
-        // Stats + status
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            FCard(Modifier.weight(1f)) {
-                Eyebrow("Today")
-                Spacer(Modifier.height(6.dp))
-                MonoNumber(NumberFormat.getIntegerInstance().format(stats.wordsToday))
-                Text("words dictated", style = Type.bodySmall.copy(color = t.ink3))
-            }
-            FCard(Modifier.weight(1f)) {
-                Eyebrow("All time")
-                Spacer(Modifier.height(6.dp))
-                MonoNumber(NumberFormat.getIntegerInstance().format(stats.wordsTotal))
-                Text("${stats.dictations} dictations", style = Type.bodySmall.copy(color = t.ink3))
+        } else {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                    .wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 640.dp).padding(horizontal = 20.dp),
+            ) {
+                headerPart()
+                bannersPart()
+                orbPart()
+                Spacer(Modifier.height(18.dp))
+                scratchPart()
+                Spacer(Modifier.height(14.dp))
+                statsPart()
+                Spacer(Modifier.height(28.dp))
             }
         }
-        Spacer(Modifier.height(12.dp))
-        FCard {
-            Eyebrow("Engine")
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                StatusDot(engineError == null && me != null)
-                Text(
-                    when {
-                        engineError != null -> engineError!!
-                        me != null -> "Freesia Cloud · connected"
-                        else -> "Checking…"
-                    },
-                    style = Type.body.copy(color = t.ink), modifier = Modifier.weight(1f),
-                )
-                latency?.takeIf { engineError == null }?.let { Text("$it ms", style = Type.eyebrow.copy(color = t.ink3)) }
-            }
-            Text(
-                listOfNotNull(s.username.ifBlank { me?.username ?: "" }.ifBlank { null }, s.server.removePrefix("https://").ifBlank { null }, me?.asrModel)
-                    .joinToString(" · "),
-                style = Type.bodySmall.copy(color = t.ink3),
-            )
-            Spacer(Modifier.height(10.dp))
-            Hairline()
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                StatusDot(bubbleOn)
-                Text(if (bubbleOn) "Bubble is on in other apps" else "Bubble is off", style = Type.body.copy(color = t.ink), modifier = Modifier.weight(1f))
-                if (!bubbleOn) GhostButton("Turn on", { openAccessibilitySettings(ctx) })
-            }
-        }
-        Spacer(Modifier.height(28.dp))
     }
 }

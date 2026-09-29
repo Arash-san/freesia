@@ -181,4 +181,10 @@ test('Native Language uses the server translation endpoint and falls back on old
   const fb = await old.transcribe({ audio: Buffer.from('x'), language: 'fa', task: 'translate' });
   assert.equal(fb.text, 'سلام');
   assert.equal(fb.translated, undefined);
+
+  // Spoken in English: the server says it did not translate, so the app formats it as usual
+  const en = createCloudEngine({ store, secrets, fetchImpl: async () => json(200, { text: 'I said this in English.', translated: false, language: 'en' }) });
+  const eo = await en.transcribe({ audio: Buffer.from('x'), language: 'fa', task: 'translate' });
+  assert.equal(eo.text, 'I said this in English.');
+  assert.equal(eo.translated, false);
 });

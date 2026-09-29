@@ -1946,12 +1946,27 @@ function renderUpdateStatus(state = {}) {
     const bp = $('updateBannerProgress');
     if (bp) { bp.hidden = status !== 'downloading'; bp.firstElementChild.style.width = `${pct}%`; }
   }
+  renderReleaseNotes($('updateBannerNotes'), state, banner ? banner.hidden : true);
+  renderReleaseNotes($('settingsUpdateNotes'), state, !['available', 'downloading', 'downloaded', 'installing'].includes(status));
   const hb = $('btnHomeUpdate');
   if (hb) {
     hb.disabled = busy || status === 'disabled';
     hb.textContent = status === 'available' ? 'Download update' : status === 'downloaded' ? 'Restart to update'
       : status === 'downloading' ? `Downloading ${pct}%` : status === 'installing' ? 'Installing…' : 'Check for updates';
   }
+}
+
+// "What's new" under an available update, rendered from the release's Markdown
+function renderReleaseNotes(el, state, hide) {
+  if (!el) return;
+  const md = state.updateInfo?.notes || '';
+  if (el.dataset.src !== md) {
+    el.dataset.src = md;
+    el.querySelector('.md').replaceChildren(md && window.FreesiaMarkdown ? window.FreesiaMarkdown.render(md) : '');
+  }
+  const v = state.updateInfo?.version || '';
+  el.querySelector('summary').textContent = v ? `What's new in ${v}` : "What's new";
+  el.hidden = hide || !md;
 }
 
 async function checkForUpdates() {

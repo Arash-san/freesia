@@ -49,6 +49,8 @@ data class DictState(
     val startedAt: Long = 0,
     /** Set when a take's audio was kept for a retry (see Saved recordings). */
     val savedRecordingId: String? = null,
+    /** Until when (epoch ms) the last insertion can be undone from the bubble. */
+    val undoUntil: Long = 0,
 )
 
 /** Where the finished text goes: a field in another app, or a box inside Freesia. */
@@ -56,6 +58,8 @@ interface DictationTarget {
     val origin: Origin
     val appPackage: String?
     suspend fun deliver(text: String): Delivery
+    /** Removes the text [deliver] just inserted, if the field still shows it. */
+    suspend fun undo(): Boolean = false
 }
 
 /**
@@ -96,6 +100,8 @@ class DictationController(
     private var capture: AudioCapture? = null
     private var target: DictationTarget? = null
     private var job: Job? = null
+    /** Where the last insertion went, while it can still be undone. */
+    private var undoTarget: DictationTarget? = null
 
     val isBusy: Boolean get() = _state.value.phase == Phase.RECORDING || _state.value.phase == Phase.PROCESSING
 
@@ -122,6 +128,7 @@ class DictationController(
         }
         capture = cap
         target = t
+        undoTarget = null
         RecordingService.start(context)
         _state.value = DictState(Phase.RECORDING, t.origin, _state.value.session + 1, startedAt = System.currentTimeMillis())
         return true
@@ -205,29 +212,9 @@ class DictationController(
                 return
             }
             // 4. Deliver. The text exists now, so it must land somewhere.
-            val text = result.text
-            val delivery = try {
-                t.deliver(text)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                reporter.error("deliver", "Inserting the text failed; copied instead", e)
-                copyToClipboard(text)
-                Delivery.COPIED
-            }
-            history.add(text, result.raw, style.id, t.appPackage, durationSec, delivery.label)
-            settings.addWords(Words.count(text))
-            // 5. Delivered: the audio is no longer needed (unless the user keeps recordings)
-            saved?.let { rec -> withContext(Dispatchers.IO) { finishRecording(rec.id, text, s.keepRecordings) } }
+            val rec = saved
             saved = null
-            _state.value = _state.value.copy(
-                phase = Phase.DONE, lastText = text, delivery = delivery, savedRecordingId = null,
-                message = if (delivery == Delivery.COPIED) "Copied. Paste it where you need it." else null,
-            )
-            delay(if (delivery == Delivery.COPIED) 2600 else 1500)
-            if (_state.value.session == session && _state.value.phase == Phase.DONE) {
-                _state.value = _state.value.copy(phase = Phase.IDLE)
-            }
+            deliver(t, result, style.id, durationSec, rec?.id, s.keepRecordings, session)
         } catch (e: CancellationException) {
             saved?.let { rec ->
                 withContext(NonCancellable + Dispatchers.IO) {
@@ -251,6 +238,113 @@ class DictationController(
                 showSaved(t.origin, savedMessage(api, auto, t.origin), rec.id)
             }
         }
+    }
+
+    /**
+     * Delivers finished text to [t], records it in History, drops the audio (unless
+     * recordings are kept) and shows DONE. After a SET_TEXT insertion the bubble
+     * offers Undo for [UNDO_MS].
+     */
+    private suspend fun deliver(
+        t: DictationTarget, result: PipelineResult, styleId: String, durationSec: Double,
+        recordingId: String?, keep: Boolean, session: Long, how: String? = null,
+    ) {
+        val text = result.text
+        val delivery = try {
+            t.deliver(text)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            reporter.error("deliver", "Inserting the text failed; copied instead", e)
+            copyToClipboard(text)
+            Delivery.COPIED
+        }
+        history.add(text, result.raw, styleId, t.appPackage, durationSec, how ?: delivery.label)
+        settings.addWords(Words.count(text))
+        // Delivered: the audio is no longer needed (unless the user keeps recordings)
+        recordingId?.let { id -> withContext(NonCancellable + Dispatchers.IO) { finishRecording(id, text, keep) } }
+        val canUndo = delivery == Delivery.INSERTED
+        undoTarget = if (canUndo) t else null
+        _state.value = _state.value.copy(
+            phase = Phase.DONE, lastText = text, delivery = delivery, savedRecordingId = null,
+            message = if (delivery == Delivery.COPIED) "Copied. Paste it where you need it." else null,
+            undoUntil = if (canUndo) System.currentTimeMillis() + UNDO_MS else 0,
+        )
+        delay(if (delivery == Delivery.COPIED) 2600 else 1500)
+        if (_state.value.session == session && _state.value.phase == Phase.DONE) {
+            _state.value = _state.value.copy(phase = Phase.IDLE)
+        }
+    }
+
+    /** "Undo" next to the bubble: takes the last inserted text back out of the field. */
+    fun undoLast() {
+        val t = undoTarget ?: return
+        if (System.currentTimeMillis() > _state.value.undoUntil || isBusy) return
+        undoTarget = null
+        _state.update { it.copy(undoUntil = 0) }
+        scope.launch {
+            val ok = try { t.undo() } catch (e: Exception) { false }
+            toast(if (ok) "Removed. It's still in History." else "Couldn't undo: the text in the field changed.")
+        }
+    }
+
+    /**
+     * "Retry" next to the bubble: transcribes a saved take again and inserts the
+     * text into [t] (the field in front of the user), like a normal dictation.
+     */
+    fun retryInto(id: String, t: DictationTarget) {
+        if (isBusy || id in _retrying.value) return
+        val rec = recordings.get(id) ?: return
+        if (!tokens.signedIn.value) {
+            fail(t.origin, "Sign in to Freesia first.", newSession = true)
+            return
+        }
+        job?.cancel()
+        target = t
+        undoTarget = null
+        _state.value = DictState(Phase.PROCESSING, t.origin, _state.value.session + 1)
+        val session = _state.value.session
+        job = scope.launch {
+            _retrying.update { it + id }
+            val s = settings.value
+            try {
+                withContext(Dispatchers.IO) { recordings.markPending(id) }
+                val result = withContext(Dispatchers.IO) {
+                    pipeline.run(recordings.file(rec), rec.mime, rec.durationSec, s, RetryPolicy()) { attempt, _, _ ->
+                        scope.launch {
+                            if (_state.value.session == session && _state.value.phase == Phase.PROCESSING) {
+                                _state.value = _state.value.copy(message = "Connection trouble. Trying again (${attempt + 1}/4)…")
+                            }
+                        }
+                    }
+                }
+                if (result.raw.isEmpty()) {
+                    withContext(NonCancellable + Dispatchers.IO) { recordings.markFailed(id, "No speech detected") }
+                    fail(t.origin, "No speech found in that recording.")
+                    return@launch
+                }
+                deliver(t, result, s.styleId, rec.durationSec, id, s.keepRecordings, session, how = "recovered")
+            } catch (e: CancellationException) {
+                withContext(NonCancellable + Dispatchers.IO) { recordings.markFailed(id, "The retry was interrupted.", autoRetry = true) }
+                throw e
+            } catch (e: Exception) {
+                val api = e as? ApiException
+                val reason = api?.message ?: "Something went wrong."
+                val auto = api != null && RetryPolicy.isRetryable(api)
+                if (api != null) reporter.warn("recovery:bubble", "Retry failed: ${describe(api)}")
+                else reporter.error("recovery:bubble", "Retry failed", e)
+                withContext(NonCancellable + Dispatchers.IO) { recordings.markFailed(id, reason, autoRetry = auto) }
+                if (auto) RecoveryScheduler.schedule(context)
+                showSaved(t.origin, savedMessage(api, auto, t.origin), id)
+            } finally {
+                _retrying.update { it - id }
+            }
+        }
+    }
+
+    /** "✕" next to the bubble in the saved state: the take stays in Saved recordings. */
+    fun dismissSaved() {
+        if (_state.value.phase == Phase.SAVED) _state.value = _state.value.copy(phase = Phase.IDLE)
     }
 
     /** Compresses a registered take to AAC-ADTS and swaps it in; on any codec problem the WAV is used. */
@@ -282,7 +376,7 @@ class DictationController(
             else -> e.message?.trim()?.let { if (it.endsWith('.')) it else "$it." } ?: "The server refused it."
         }
         val next = if (auto) "Saved; Freesia will retry." else "Saved; retry it in Freesia."
-        return if (origin == Origin.BUBBLE) "$why $next Tap the bloom to open it." else "$why $next"
+        return if (origin == Origin.BUBBLE) "$why Saved. Tap Retry next to the bloom." else "$why $next"
     }
 
     private fun finishRecording(id: String, text: String, keep: Boolean) {
@@ -415,7 +509,9 @@ class DictationController(
 
     companion object {
         private const val MIN_TAKE_MS = 350L
-        /** How long the bubble stays in its "saved" state (tap to open Saved recordings). */
-        const val SAVED_STATE_MS = 10_000L
+        /** How long the bubble stays in its "saved" state, with Retry next to it. */
+        const val SAVED_STATE_MS = 20_000L
+        /** How long "Undo" stays next to the bubble after an insertion. */
+        const val UNDO_MS = 5_000L
     }
 }
