@@ -61,7 +61,7 @@ export async function boot(overrides = {}, apiOverrides = {}) {
     addEventListener: noop,
     getUserMedia: async () => { throw new Error('getUserMedia is not available in unit tests'); }
   };
-  for (const f of ['styles-data.js', 'audio-meter.js', 'js/orb.js', 'js/ui.js', 'js/audio.js', 'js/vocab.js', 'app.js']) window.eval(readRenderer(f));
+  for (const f of ['styles-data.js', 'audio-meter.js', 'js/orb.js', 'js/ui.js', 'js/audio.js', 'js/vocab.js', 'js/markdown.js', 'app.js']) window.eval(readRenderer(f));
   window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
   await new Promise((r) => setTimeout(r, 80));
   // Let in-flight renderer promises settle before tearing the window down

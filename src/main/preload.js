@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('freesia', {
   overlayError: (message) => ipcRenderer.invoke('overlay-error', message),
   overlayProgress: (info) => ipcRenderer.invoke('overlay-progress', info),
   overlayHide: () => ipcRenderer.invoke('overlay-hide'),
+  overlayKept: () => ipcRenderer.invoke('overlay-kept'),
   overlayTimer: (timeStr) => ipcRenderer.invoke('overlay-timer', timeStr),
   overlayAudioLevel: (level) => ipcRenderer.send('overlay-audio-level', level),
 

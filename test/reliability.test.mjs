@@ -146,3 +146,43 @@ test('Native Language on the cloud asks the server to translate and skips reform
   assert.deepEqual(calls.inject, ['Hello from Persian.']);
   dom.window.close();
 });
+
+// A fake microphone + MediaRecorder: one chunk of audio, stopped on demand
+function fakeRecorder(window) {
+  window.AudioContext = class {
+    createAnalyser() { return { fftSize: 2048, getFloatTimeDomainData() {} }; }
+    createMediaStreamSource() { return { connect() {} }; }
+    resume() { return Promise.resolve(); }
+    close() { return Promise.resolve(); }
+  };
+  window.MediaRecorder = class {
+    constructor() { this.state = 'inactive'; }
+    start() { this.state = 'recording'; }
+    stop() { this.state = 'inactive'; this.ondataavailable({ data: new window.Blob(['opus']) }); setTimeout(() => this.onstop(), 0); }
+  };
+  window.navigator.mediaDevices.getUserMedia = async () => ({ getTracks: () => [{ stop() {} }], getAudioTracks: () => [{ addEventListener() {} }] });
+}
+
+async function cancelAfter(seconds, settingsOverride = {}) {
+  const saved = [];
+  const { t, dom, window } = await boot(settingsOverride, { saveFailedAudio: async (audio, meta) => { saved.push(meta); return 'recording-esc'; } });
+  fakeRecorder(window);
+  await t.startRecording('dictate-inject');
+  t.rewindRecording(seconds * 1000); // as if the take had run this long
+  t.stopRecording(true); // what Esc does
+  await settle(60);
+  dom.window.close();
+  return saved;
+}
+
+test('Esc keeps the recording in History by default (nothing is transcribed or typed)', async () => {
+  const saved = await cancelAfter(95);
+  assert.equal(saved.length, 1);
+  assert.match(saved[0].error, /Cancelled with Esc/);
+  assert.equal(saved[0].duration, '1:35');
+});
+
+test('Esc discards the recording when the user turned keeping off, and ignores a tiny slip', async () => {
+  assert.equal((await cancelAfter(30, { keepCancelledRecordings: false })).length, 0);
+  assert.equal((await cancelAfter(0.5)).length, 0);
+});

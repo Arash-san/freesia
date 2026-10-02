@@ -70,9 +70,21 @@ app.whenReady().then(async()=>{
     await sleep(500);
     const ended=await main.webContents.executeJavaScript('destination.stream.getTracks().every(t=>t.readyState==="ended")');
     assert(ended);
-    const files=fs.existsSync(path.join(profile,'failed-recordings'))?fs.readdirSync(path.join(profile,'failed-recordings')):[];
-    assert.equal(files.length,0,'cancel never saves or transcribes audio');
-    const result={passed:true,devices,hiddenSamples:quiet.count-before,quietPeak:quiet.peak,loudPeak:loud,tracksReleased:ended};
+    // Esc (cancel) keeps the audio by default, and never transcribes or types it
+    const recDir=path.join(profile,'failed-recordings');
+    const audioFiles=()=>fs.existsSync(recDir)?fs.readdirSync(recDir).filter(f=>!f.endsWith('.json')):[];
+    await sleep(500);
+    assert.equal(audioFiles().length,1,'a cancelled take is kept');
+    const meta=fs.readdirSync(recDir).filter(f=>f.endsWith('.json')).map(f=>JSON.parse(fs.readFileSync(path.join(recDir,f),'utf8')));
+    assert(meta.some(m=>/Cancelled with Esc/.test(m.error||'')),'kept take is labelled as cancelled');
+    assert.notEqual(await main.webContents.executeJavaScript('document.getElementById("output")?.textContent||""'),'Synthetic speech test','a cancelled take is never transcribed');
+    // With the setting off, Esc discards as before
+    await main.webContents.executeJavaScript(`settings.keepCancelledRecordings=false; gainNode.gain.value=0.3; startRecording();`);
+    await sleep(2200);
+    main.webContents.send('dictation-cancel');
+    await sleep(900);
+    assert.equal(audioFiles().length,1,'with keeping off, Esc discards the take');
+    const result={passed:true,devices,hiddenSamples:quiet.count-before,quietPeak:quiet.peak,loudPeak:loud,tracksReleased:ended,cancelledKept:true};
     fs.writeFileSync(path.join(artifacts,'native-smoke-result.json'),JSON.stringify(result,null,2));
     console.log(JSON.stringify(result));
   } catch(error) {fs.writeFileSync(path.join(artifacts,'native-smoke-result.json'),JSON.stringify({passed:false,error:error.stack})); process.exitCode=1;}

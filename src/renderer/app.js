@@ -572,6 +572,7 @@ async function startRecording(mode = 'dictate-inject', { selection = '' } = {}) 
           api.overlayHide?.();
           homeOrb?.setState('idle');
           setOrbCaption('Tap the bloom to try it here');
+          if (recorder.discard && chunks.length) await keepCancelledRecording(new Blob(chunks, { type: 'audio/webm' }), mode, recordingSeconds());
           return;
         }
         if (settings.sounds !== false) window.FreesiaAudio?.chime('stop');
@@ -1071,6 +1072,29 @@ async function deleteHistoryItem(id, card) {
 }
 
 // ---------------------------------------------------------- recoveries
+const CANCELLED_NOTE = 'Cancelled with Esc. Not transcribed.';
+const MIN_KEPT_CANCEL_SECONDS = 1.5;
+
+// Esc cancels a dictation, but by default the audio is kept (History → Recordings)
+// so pressing it by mistake never loses minutes of speech. Off in Settings.
+async function keepCancelledRecording(blob, mode, durationSec) {
+  if (settings.keepCancelledRecordings === false || mode === 'test' || durationSec < MIN_KEPT_CANCEL_SECONDS) return null;
+  try {
+    const audio = await blob.arrayBuffer();
+    const base = await api.saveFailedAudio(audio, {
+      timestamp: new Date().toISOString(), mode, sizeMB: (audio.byteLength / 1048576).toFixed(1),
+      duration: clock(durationSec), durationSec, error: CANCELLED_NOTE, style: getActiveStyle().id
+    });
+    loadFailedRecordings();
+    api.overlayKept?.();
+    toast('Cancelled. The recording is kept in History in case you need it.', 'info', 5000);
+    return base;
+  } catch (e) {
+    logError('keepCancelledRecording', e);
+    return null;
+  }
+}
+
 async function loadFailedRecordings() {
   try { renderFailedRecordings(await api.getFailedRecordings()); } catch (e) { logError('loadFailedRecordings', e); }
 }
@@ -1780,7 +1804,7 @@ function bindSettings() {
   $('btnMicTest')?.addEventListener('click', toggleSettingsMic);
   window.FreesiaAudio?.createMeter($('settingsMeter'), 18).reset();
   window.FreesiaAudio?.createMeter($('obMeter'), 26).reset();
-  const toggles = { toggleOverlay: 'showOverlay', toggleSounds: 'sounds', toggleKeepRecordings: 'keepSuccessRecordings', toolTrimSpelling: 'toolTrimSpelling', toolSpokenEmoji: 'toolSpokenEmoji', toolPolish: 'toolPolish' };
+  const toggles = { toggleOverlay: 'showOverlay', toggleSounds: 'sounds', toggleKeepRecordings: 'keepSuccessRecordings', toggleKeepCancelled: 'keepCancelledRecordings', toolTrimSpelling: 'toolTrimSpelling', toolSpokenEmoji: 'toolSpokenEmoji', toolPolish: 'toolPolish' };
   for (const [id, key] of Object.entries(toggles)) $(id)?.addEventListener('change', (e) => { saveSetting(key, e.target.checked); if (key === 'sounds' && e.target.checked) window.FreesiaAudio?.chime('start'); });
   $('toggleAutoLaunch')?.addEventListener('change', (e) => api.setAutoLaunch(e.target.checked));
   $('toggleErrorReporting')?.addEventListener('change', (e) => {
@@ -1804,6 +1828,7 @@ function updateSettingsUI() {
   check('toggleSounds', settings.sounds !== false);
   check('toggleAutoLaunch', settings.autoLaunch);
   check('toggleKeepRecordings', settings.keepSuccessRecordings);
+  check('toggleKeepCancelled', settings.keepCancelledRecordings !== false);
   check('toolTrimSpelling', settings.toolTrimSpelling);
   check('toolSpokenEmoji', settings.toolSpokenEmoji);
   check('toolPolish', settings.toolPolish);
@@ -2021,5 +2046,6 @@ window.__freesiaTest = {
   buildFormatPrompt, stripWrapping, getAllStyles, engineOrder, pickFormatter, isEngineReady, buildAudioConstraints, openMicrophoneStream,
   startRecording, stopRecording, processAudio, renderUpdateStatus, installUpdate, keyFromEvent, spokenLanguage, geminiInstruction,
   applyVocabulary, teachCorrection,
-  setSettings: (s) => { settings = s; }, setEngineState: (s) => { engineState = s; }, getSettings: () => settings
+  setSettings: (s) => { settings = s; }, setEngineState: (s) => { engineState = s; }, getSettings: () => settings,
+  rewindRecording: (ms) => { if (recordingStartTime) recordingStartTime -= ms; }
 };

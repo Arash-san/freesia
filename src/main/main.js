@@ -111,6 +111,8 @@ const store = new Store({
     autoStyleSwitch: false,
     styleOverrides: {},
     keepSuccessRecordings: false,
+    // Esc mid-dictation still stops it, but the audio stays in History → Recordings
+    keepCancelledRecordings: true,
     customStyles: [],
     toolTrimSpelling: false,
     toolSpokenEmoji: false,
@@ -293,9 +295,11 @@ function positionOverlay() {
 }
 
 let overlayHideTimer = null;
+let overlayShows = 0; // a hide scheduled before the latest show must not close it
 function showOverlay(state, info) {
   if (!store.get('showOverlay')) return;
   clearTimeout(overlayHideTimer);
+  overlayShows++;
   const win = ensureOverlayWindow();
   positionOverlay();
   // Re-assert topmost every time: Windows silently demotes always-on-top.
@@ -315,7 +319,8 @@ function hideOverlay() {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.webContents.send('overlay-state', { state: 'hidden' });
     // Give the pill its exit animation before the window disappears
-    setTimeout(() => { if (overlayWindow && !overlayWindow.isDestroyed() && !isRecording && !isProcessing) overlayWindow.hide(); }, 260);
+    const shows = overlayShows;
+    setTimeout(() => { if (overlayWindow && !overlayWindow.isDestroyed() && !isRecording && !isProcessing && shows === overlayShows) overlayWindow.hide(); }, 260);
   }
 }
 
@@ -532,6 +537,12 @@ ipcMain.handle('overlay-done', (_, info) => {
 ipcMain.handle('overlay-error', (_, message) => {
   isProcessing = false;
   setOverlay('error', { message: String(message || 'Something went wrong') }, 3200);
+});
+// Esc cancelled the take but its audio was kept (History → Recordings)
+ipcMain.handle('overlay-kept', () => {
+  if (isRecording || isProcessing) return;
+  showOverlay('kept', {});
+  overlayHideTimer = setTimeout(hideOverlay, 2600);
 });
 ipcMain.handle('overlay-progress', (_, info) => setOverlay('processing', info || {}));
 ipcMain.handle('overlay-hide', () => { isProcessing = false; hideOverlay(); });

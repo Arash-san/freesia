@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.3
+
+**Esc no longer throws away what you said.** Esc still stops a dictation and types nothing, but the recording is now kept in History, where you can transcribe it or delete it. The floating pill confirms it with "Cancelled · Recording kept in History". This is on by default; turn off "Keep recordings cancelled with Esc" in Settings if you want Esc to discard, as before. Takes shorter than a second and a half are not kept.
+
 ## 3.0.2
 
 **What's new is shown with each update.** When a new version is available, the update banner and Settings have a "What's new" section with that version's changes, formatted.

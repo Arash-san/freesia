@@ -88,6 +88,9 @@
       } else if (state === 'done') {
         label.textContent = 'Done';
         sub.textContent = msg.label || '';
+      } else if (state === 'kept') {
+        label.textContent = 'Cancelled';
+        sub.textContent = 'Recording kept in History';
       } else if (state === 'error') {
         label.textContent = 'Couldn’t finish';
         sub.textContent = msg.message || 'Your recording is saved';
