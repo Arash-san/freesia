@@ -59,6 +59,7 @@ async function saveSetting(key, value) {
 // Boot
 // ==========================================================
 document.addEventListener('DOMContentLoaded', async () => {
+  window.FreesiaAudio?.warm?.(); // the start chime plays without delay
   settings = await api.getSettings();
   applyTheme({ source: settings.theme || 'system', shouldUseDarkColors: window.matchMedia?.('(prefers-color-scheme: dark)').matches });
   activeStyleId = settings.activeStyle || 'normal';
@@ -487,8 +488,38 @@ async function loadMicrophones() {
   }
 }
 
+// The microphone stays open for a while after a dictation (Settings → "Keep the
+// microphone ready"): opening it can take half a second or more on a laptop,
+// and words spoken in that time were lost.
+const MIC_READY_MS = 120000;
+let readyMic = null; // { stream, deviceId, timer }
+
+function closeReadyMic() {
+  if (!readyMic) return;
+  clearTimeout(readyMic.timer);
+  readyMic.stream.getTracks().forEach((t) => t.stop());
+  readyMic = null;
+}
+
+function releaseMicrophone(stream) {
+  const live = stream?.getAudioTracks?.().length && stream.getAudioTracks().every((t) => t.readyState === 'live');
+  if (settings.keepMicReady === false || !live) { stream?.getTracks().forEach((t) => t.stop()); return; }
+  if (readyMic && readyMic.stream !== stream) closeReadyMic();
+  clearTimeout(readyMic?.timer);
+  readyMic = { stream, deviceId: settings.microphoneId || '', timer: setTimeout(closeReadyMic, MIC_READY_MS) };
+}
+
 async function openMicrophoneStream() {
   const selectedId = settings.microphoneId || '';
+  if (readyMic) {
+    const r = readyMic;
+    if (r.deviceId === selectedId && r.stream.getAudioTracks().every((t) => t.readyState === 'live')) {
+      clearTimeout(r.timer);
+      readyMic = null;
+      return r.stream;
+    }
+    closeReadyMic();
+  }
   try {
     return await navigator.mediaDevices.getUserMedia({ audio: buildAudioConstraints(selectedId) });
   } catch (e) {
@@ -536,31 +567,19 @@ async function startRecording(mode = 'dictate-inject', { selection = '' } = {}) 
   let stream;
   try {
     const styleReady = mode === 'test' ? Promise.resolve() : detectAndApplyAutoStyle();
+    const opening = performance.now();
     stream = await openMicrophoneStream();
     if (session !== recordingSession) { stream.getTracks().forEach((t) => t.stop()); return; }
-    isRecording = true;
-    document.body.classList.add('is-recording');
-    loadMicrophones();
-    if (settings.sounds !== false) window.FreesiaAudio?.chime('start');
-    startTimer();
-    homeOrb?.setState('listening');
-    setOrbCaption(mode === 'test' ? 'Listening… tap to finish' : mode === 'command' ? 'Listening for your edit…' : 'Listening… press the shortcut again to finish');
-    const icn = $('orbIcon'); if (icn) icn.innerHTML = '<use href="#i-stop"/>';
 
-    audioContext = new AudioContext();
-    analyser = audioContext.createAnalyser();
-    analyser.fftSize = 2048;
-    audioContext.createMediaStreamSource(stream).connect(analyser);
-    await audioContext.resume();
-    if (session !== recordingSession) { stream.getTracks().forEach((t) => t.stop()); return; }
-    runMeter();
-
+    // Record first, everything else after: the chime, the timer and the level meter
+    // (a new AudioContext alone can take hundreds of ms on a laptop) used to come
+    // before the recorder started, so the first words were cut off.
     const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 64000 });
     mediaRecorder = recorder;
     const chunks = [];
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
     recorder.onstop = async () => {
-      stream.getTracks().forEach((t) => t.stop());
+      releaseMicrophone(stream);
       clearInterval(meterTimer);
       api.overlayAudioLevel?.(0);
       stopTimer();
@@ -588,11 +607,33 @@ async function startRecording(mode = 'dictate-inject', { selection = '' } = {}) 
     };
     // 1 s slices: a crash loses at most a second of audio
     recorder.start(1000);
+    isRecording = true;
+    startTimer();
+    api.recordingLive?.();
+    if (settings.sounds !== false) window.FreesiaAudio?.chime('start');
+    api.logToFile?.('INFO', 'recording', `Recording started ${Math.round(performance.now() - opening)} ms after the microphone was requested`);
     stream.getAudioTracks()[0]?.addEventListener('ended', () => {
       if (!isRecording) return;
       toast('Microphone disconnected. Transcribing what was captured.', 'info');
       stopRecording();
     });
+    document.body.classList.add('is-recording');
+    loadMicrophones();
+    homeOrb?.setState('listening');
+    setOrbCaption(mode === 'test' ? 'Listening… tap to finish' : mode === 'command' ? 'Listening for your edit…' : 'Listening… press the shortcut again to finish');
+    const icn = $('orbIcon'); if (icn) icn.innerHTML = '<use href="#i-stop"/>';
+
+    // The level meter: only the visuals wait for it now
+    try {
+      audioContext = new AudioContext();
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 2048;
+      audioContext.createMediaStreamSource(stream).connect(analyser);
+      await audioContext.resume();
+      if (session === recordingSession && isRecording) runMeter();
+    } catch (meterError) {
+      if (session === recordingSession && isRecording) logError('recording:meter', meterError);
+    }
   } catch (e) {
     stream?.getTracks().forEach((t) => t.stop());
     if (session !== recordingSession) return;
@@ -1804,7 +1845,7 @@ function bindSettings() {
   $('btnMicTest')?.addEventListener('click', toggleSettingsMic);
   window.FreesiaAudio?.createMeter($('settingsMeter'), 18).reset();
   window.FreesiaAudio?.createMeter($('obMeter'), 26).reset();
-  const toggles = { toggleOverlay: 'showOverlay', toggleSounds: 'sounds', toggleKeepRecordings: 'keepSuccessRecordings', toggleKeepCancelled: 'keepCancelledRecordings', toolTrimSpelling: 'toolTrimSpelling', toolSpokenEmoji: 'toolSpokenEmoji', toolPolish: 'toolPolish' };
+  const toggles = { toggleOverlay: 'showOverlay', toggleSounds: 'sounds', toggleKeepRecordings: 'keepSuccessRecordings', toggleKeepCancelled: 'keepCancelledRecordings', toggleKeepMicReady: 'keepMicReady', toolTrimSpelling: 'toolTrimSpelling', toolSpokenEmoji: 'toolSpokenEmoji', toolPolish: 'toolPolish' };
   for (const [id, key] of Object.entries(toggles)) $(id)?.addEventListener('change', (e) => { saveSetting(key, e.target.checked); if (key === 'sounds' && e.target.checked) window.FreesiaAudio?.chime('start'); });
   $('toggleAutoLaunch')?.addEventListener('change', (e) => api.setAutoLaunch(e.target.checked));
   $('toggleErrorReporting')?.addEventListener('change', (e) => {
@@ -1829,6 +1870,7 @@ function updateSettingsUI() {
   check('toggleAutoLaunch', settings.autoLaunch);
   check('toggleKeepRecordings', settings.keepSuccessRecordings);
   check('toggleKeepCancelled', settings.keepCancelledRecordings !== false);
+  check('toggleKeepMicReady', settings.keepMicReady !== false);
   check('toolTrimSpelling', settings.toolTrimSpelling);
   check('toolSpokenEmoji', settings.toolSpokenEmoji);
   check('toolPolish', settings.toolPolish);
@@ -2047,5 +2089,6 @@ window.__freesiaTest = {
   startRecording, stopRecording, processAudio, renderUpdateStatus, installUpdate, keyFromEvent, spokenLanguage, geminiInstruction,
   applyVocabulary, teachCorrection,
   setSettings: (s) => { settings = s; }, setEngineState: (s) => { engineState = s; }, getSettings: () => settings,
-  rewindRecording: (ms) => { if (recordingStartTime) recordingStartTime -= ms; }
+  rewindRecording: (ms) => { if (recordingStartTime) recordingStartTime -= ms; },
+  closeReadyMic
 };

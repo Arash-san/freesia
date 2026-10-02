@@ -35,10 +35,16 @@
 
   // Soft two-note chimes made with oscillators; no audio files shipped.
   let chimeCtx = null;
+  // Created at startup (warm()), not on the first chime: creating an AudioContext
+  // on a slow laptop made the start chime late.
+  function warm() {
+    try { chimeCtx = chimeCtx || new (root.AudioContext || root.webkitAudioContext)(); } catch { /* no audio output */ }
+  }
   function chime(kind) {
     try {
-      chimeCtx = chimeCtx || new (root.AudioContext || root.webkitAudioContext)();
+      warm();
       const ctx = chimeCtx;
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
       const notes = {
         start: [[659.25, 0], [987.77, 0.07]],
         stop: [[880, 0], [587.33, 0.07]],
@@ -81,5 +87,5 @@
     };
   }
 
-  root.FreesiaAudio = { toWav16k, chime, createMeter };
+  root.FreesiaAudio = { toWav16k, chime, createMeter, warm };
 })(typeof window !== 'undefined' ? window : globalThis);

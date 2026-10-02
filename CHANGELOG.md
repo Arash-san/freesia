@@ -4,6 +4,8 @@
 
 **Esc no longer throws away what you said.** Esc still stops a dictation and types nothing, but the recording is now kept in History, where you can transcribe it or delete it. The floating pill confirms it with "Cancelled · Recording kept in History". This is on by default; turn off "Keep recordings cancelled with Esc" in Settings if you want Esc to discard, as before. Takes shorter than a second and a half are not kept.
 
+**No more lost first words on slower PCs.** Recording now starts the moment the microphone opens. Before, the start chime, the timer and the level meter were set up first, which on a laptop could take long enough to cut off the beginning of what you said. The floating pill says "Starting" until recording has really begun, and the start chime now means "recording". The microphone also stays ready for 2 minutes after a dictation, so the next one begins instantly. Windows shows the microphone as in use during that time; turn off "Keep the microphone ready" in Settings if you prefer.
+
 ## 3.0.2
 
 **What's new is shown with each update.** When a new version is available, the update banner and Settings have a "What's new" section with that version's changes, formatted.

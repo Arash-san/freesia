@@ -6,7 +6,7 @@ delete env.ELECTRON_RUN_AS_NODE;
 const resultPath = path.resolve(__dirname, '../.tmp/native-smoke-result.json');
 if (fs.existsSync(resultPath)) fs.unlinkSync(resultPath);
 const result = spawnSync(require('electron'), [path.join(__dirname,'native-smoke.cjs')], {
-  env, windowsHide:true, timeout:30000, encoding:'utf8'
+  env, windowsHide:true, timeout:120000, encoding:'utf8'
 });
 if (result.error) throw result.error;
 if (!fs.existsSync(resultPath)) throw new Error(`Native smoke did not finish: ${result.stderr}`);

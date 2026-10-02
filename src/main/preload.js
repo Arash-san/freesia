@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('freesia', {
   // Recording state sync with the shortcut state machine
   recordingFailed: (message) => ipcRenderer.invoke('recording-failed', message),
   recordingState: (state) => ipcRenderer.send('recording-state', state),
+  recordingLive: () => ipcRenderer.send('recording-live'),
 
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
 

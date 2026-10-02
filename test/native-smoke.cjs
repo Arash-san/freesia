@@ -50,6 +50,7 @@ app.whenReady().then(async()=>{
       window.destination=signalContext.createMediaStreamDestination();
       tone.connect(gainNode);gainNode.connect(destination);tone.start();
       navigator.mediaDevices.getUserMedia=async()=>destination.stream;
+      settings.keepMicReady=false; // this test checks that cancel releases the microphone
       startRecording();
     `);
     await sleep(700);

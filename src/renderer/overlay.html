@@ -75,10 +75,14 @@
       if (state === 'hidden') { pill.classList.remove('show'); orb.setState('idle'); return; }
       if (msg.mode) mode = msg.mode;
       pill.className = `pill show ${state}`;
-      timer.hidden = esc.hidden = state !== 'listening';
+      timer.hidden = state !== 'listening';
+      esc.hidden = state !== 'listening' && state !== 'starting';
       check.hidden = state !== 'done';
       orb.setState(state === 'listening' ? 'listening' : state === 'processing' ? 'processing' : state === 'done' ? 'done' : state === 'error' ? 'error' : 'idle');
-      if (state === 'listening') {
+      if (state === 'starting') {
+        label.textContent = 'Starting';
+        sub.textContent = 'Opening the microphone…';
+      } else if (state === 'listening') {
         label.textContent = mode === 'command' ? 'Editing by voice' : 'Listening';
         sub.textContent = msg.hint || (mode === 'command' ? 'Say how to change it' : 'Press again to finish');
         timer.textContent = '0:00';

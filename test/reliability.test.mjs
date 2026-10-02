@@ -186,3 +186,50 @@ test('Esc discards the recording when the user turned keeping off, and ignores a
   assert.equal((await cancelAfter(30, { keepCancelledRecordings: false })).length, 0);
   assert.equal((await cancelAfter(0.5)).length, 0);
 });
+
+// Laptops: opening the microphone and building the level meter are slow, and words
+// spoken before the recorder started were lost.
+function orderedRecorder(window, order, opens) {
+  window.AudioContext = class {
+    constructor() { order.push('meter'); }
+    createAnalyser() { return { fftSize: 2048, getFloatTimeDomainData() {} }; }
+    createMediaStreamSource() { return { connect() {} }; }
+    resume() { return Promise.resolve(); }
+    close() { return Promise.resolve(); }
+  };
+  window.MediaRecorder = class {
+    constructor() { this.state = 'inactive'; }
+    start() { this.state = 'recording'; order.push('record'); }
+    stop() { this.state = 'inactive'; this.ondataavailable({ data: new window.Blob(['opus']) }); setTimeout(() => this.onstop(), 0); }
+  };
+  window.navigator.mediaDevices.getUserMedia = async () => {
+    opens.n++;
+    const track = { readyState: 'live', stop() { this.readyState = 'ended'; }, addEventListener() {} };
+    return { getTracks: () => [track], getAudioTracks: () => [track] };
+  };
+}
+
+test('the recorder starts as soon as the microphone opens, before the meter and the chime', async () => {
+  const order = []; const opens = { n: 0 }; let live = 0;
+  const { t, dom, window } = await boot({ keepMicReady: false }, { recordingLive: () => { live++; order.push('live'); } });
+  orderedRecorder(window, order, opens);
+  await t.startRecording('dictate-inject');
+  assert.deepEqual(order.slice(0, 3), ['record', 'live', 'meter']);
+  assert.equal(live, 1);
+  t.stopRecording(true);
+  await settle(40);
+  dom.window.close();
+});
+
+test('the microphone stays ready between takes, unless turned off', async () => {
+  for (const [keep, expected] of [[true, 1], [false, 2]]) {
+    const order = []; const opens = { n: 0 };
+    const { t, dom, window } = await boot({ keepMicReady: keep, keepCancelledRecordings: false });
+    orderedRecorder(window, order, opens);
+    await t.startRecording('dictate-inject'); t.stopRecording(true); await settle(40);
+    await t.startRecording('dictate-inject'); t.stopRecording(true); await settle(40);
+    assert.equal(opens.n, expected, `keepMicReady=${keep}`);
+    t.closeReadyMic();
+    dom.window.close();
+  }
+});

@@ -113,6 +113,8 @@ const store = new Store({
     keepSuccessRecordings: false,
     // Esc mid-dictation still stops it, but the audio stays in History → Recordings
     keepCancelledRecordings: true,
+    // Keep the microphone open for 2 minutes after a dictation so the next starts instantly
+    keepMicReady: true,
     customStyles: [],
     toolTrimSpelling: false,
     toolSpokenEmoji: false,
@@ -393,11 +395,16 @@ function handleShortcut(mode) {
   else startDictation();
 }
 
+// The pill says "Starting" until the renderer reports that the recorder is running
+// ('recording-live'), so "Listening" never shows while the microphone is still opening.
+let overlayMode = { mode: 'dictate' };
+
 function startDictation() {
   isRecording = true;
   globalShortcut.register('Escape', cancelDictation);
+  overlayMode = { mode: 'dictate' };
   sendToMain('dictation-start');
-  showOverlay('listening', { mode: 'dictate' });
+  showOverlay('starting', overlayMode);
 }
 
 function stopDictation(mode = 'dictate') {
@@ -415,12 +422,13 @@ function stopDictation(mode = 'dictate') {
 async function startCommandMode() {
   isRecording = true;
   globalShortcut.register('Escape', cancelDictation);
-  showOverlay('listening', { mode: 'command' });
+  overlayMode = { mode: 'command' };
+  showOverlay('starting', overlayMode);
   let selection = '';
   try { selection = await captureSelection(); } catch (e) { writeLog('WARN', 'command', `Selection capture failed: ${e.message}`); }
   if (!isRecording) return;
+  if (!selection) overlayMode = { mode: 'command', hint: 'No selection: will write new text' };
   sendToMain('command-start', { selection });
-  if (!selection) setOverlay('listening', { mode: 'command', hint: 'No selection: will write new text' });
 }
 
 function cancelDictation() {
@@ -523,6 +531,9 @@ ipcMain.on('recording-state', (_, state) => {
   if (isProcessing) { processingSince = Date.now(); setOverlay('processing'); }
   if (isRecording) globalShortcut.register('Escape', cancelDictation);
   else globalShortcut.unregister('Escape');
+});
+ipcMain.on('recording-live', () => {
+  if (isRecording) setOverlay('listening', overlayMode);
 });
 ipcMain.handle('recording-failed', (_, message) => {
   isRecording = false;
