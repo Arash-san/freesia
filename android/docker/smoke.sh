@@ -13,7 +13,7 @@
 # emulator controller's gRPC injectAudio (inject_audio.py).
 set -uo pipefail
 OUT=/work/dist/smoke
-mkdir -p "$OUT"; rm -f "$OUT"/*
+mkdir -p "$OUT"; rm -f "$OUT"/* /tmp/smoke-contrib-choice
 PKG=com.freesia.app
 APK="$(ls -t /work/dist/Freesia-Android-*.apk | head -1)"
 ACCOUNT="${FREESIA_TEST_CONFIG:-}"
@@ -234,6 +234,15 @@ if [[ -n "$ACCOUNT" && -f "$ACCOUNT" && -n "$SAMPLE" && -f "$SAMPLE" ]]; then
   tap_where "n.get('text')=='Sign in'"
   if has_text "Finish" 25; then ok "signed in through the sign-in screen"; else bad "sign in"; shot 08b_signin_failed; fi
   tap_where "n.get('text')=='Finish'"; sleep 2
+  # Voice contributions: asked once after signing in, off unless the user agrees
+  if has_text "Help Freesia Voice understand you better" 15; then
+    shot 09a_contribution_question
+    if grep -q "Share my recordings" /tmp/ui.xml && grep -q "No thanks" /tmp/ui.xml; then ok "contribution question shows the terms with both choices"; else bad "contribution question buttons"; fi
+    tap_where "n.get('text')=='No thanks'"; sleep 2
+    dump; grep -q "Help Freesia Voice understand you better" /tmp/ui.xml && bad "contribution question did not close" || ok "No thanks closes the question"
+  else
+    bad "contribution question not shown after signing in"
+  fi
   sleep 3
   if scroll_to "'Freesia Cloud · connected' in n.get('text','')" 4; then ok "Home: engine shows Freesia Cloud · connected"; else bad "engine status"; fi
   shot 09_home_signed_in

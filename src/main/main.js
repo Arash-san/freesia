@@ -670,6 +670,9 @@ ipcMain.handle('cloud:login', wrap((_, server, username, password) =>
   cloud.login(server, String(username || ''), String(password || ''), `Freesia on ${os.hostname()}`)));
 ipcMain.handle('cloud:logout', wrap(() => cloud.logout()));
 ipcMain.handle('cloud:health', wrap(() => cloud.health()));
+ipcMain.handle('cloud:contrib-get', wrap(() => cloud.contribution()));
+ipcMain.handle('cloud:contrib-set', wrap((_, enabled, version) => cloud.setContribution(!!enabled, Number(version))));
+ipcMain.handle('cloud:contrib-delete', wrap(() => cloud.deleteContributions()));
 ipcMain.handle('cloud:open-account', () => { const s = cloud.status().server; return s ? shell.openExternal(s) : false; });
 ipcMain.handle('gemini:set-key', wrap((_, key) => gemini.setKey(key)));
 ipcMain.handle('gemini:refresh-models', wrap(() => gemini.refreshModels()));

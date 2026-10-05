@@ -101,6 +101,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     try { homeOrb = window.createBloomOrb($('homeOrb'), { palette: bloomPalette() }); } catch (e) { logError('orb', e); }
   }
   if (settings.onboarded && !settings.seenV3) setTimeout(showWhatsNew, 900);
+  // After an update, people signed in to a server that collects voice
+  // contributions are asked once (per version of its terms) whether to share
+  if (settings.onboarded) setTimeout(() => checkContribution(), settings.seenV3 ? 1800 : 2600);
 });
 
 // One-time note for people upgrading from 2.x, who were all on Gemini
@@ -315,6 +318,7 @@ async function finishOnboarding() {
   toast('Welcome to Freesia', 'success');
   homeOrb?.setState('done');
   setTimeout(() => homeOrb?.setState('idle'), 1400);
+  setTimeout(() => checkContribution(), 2200);
 }
 
 // ==========================================================
@@ -1683,6 +1687,7 @@ function cloudLoginForm(onDone) {
     renderEngines();
     renderEnginePill();
     onDone?.();
+    if (settings.onboarded) checkContribution();
   });
   return form;
 }
@@ -1708,9 +1713,122 @@ function renderCloudBody() {
     h('button.btn.btn-ghost.btn-sm', { html: `${icon('external')}Account & devices`, onclick: () => api.cloudOpenAccount() }),
     h('button.btn.btn-ghost.btn-sm', { text: 'Sign out', onclick: async () => {
       if (!(await confirmDialog('Sign out of Freesia Cloud?', 'This device\'s token is revoked on the server.', { ok: 'Sign out' }))) return;
+      contribState = null;
       engineState.cloud = await api.cloudLogout(); renderEngines(); renderEnginePill();
     } }),
     latency
+  ]), h('div', { id: 'contribBlock' }));
+  renderContribBlock();
+  if (!contribState) checkContribution({ prompt: false });
+}
+
+// ==========================================================
+// Voice contributions: off by default. Only servers that support them
+// (InquireLab's Freesia Voice) answer /api/contribute; the server keeps the
+// choice and the terms, so each account is asked once per version of the terms.
+// ==========================================================
+let contribState = null;
+let contribAsked = false;
+let contribDialogOpen = false;
+
+async function checkContribution({ prompt = true } = {}) {
+  if (!engineState.cloud?.configured || !api.cloudContribution) return;
+  const res = await api.cloudContribution();
+  if (!res || res.error || !res.available) { contribState = null; renderContribBlock(); return; }
+  contribState = res;
+  renderContribBlock();
+  if (prompt && !res.decided && !contribAsked) {
+    contribAsked = true;
+    showContributionTerms({ firstTime: true });
+  }
+}
+
+function contribTermsBody(terms) {
+  return h('div.contrib-terms', {}, terms.paragraphs.map((t, i) => h('p', { text: t, style: { '--i': i } })));
+}
+
+// The terms dialog is the only way to turn sharing on, so nobody agrees to text they did not see
+async function showContributionTerms({ firstTime = false } = {}) {
+  const st = contribState;
+  if (!st || contribDialogOpen) return false;
+  contribDialogOpen = true;
+  const actions = st.enabled && !firstTime
+    ? [{ label: 'Close', kind: 'secondary', value: null }]
+    : [{ label: 'No thanks', kind: 'ghost', value: false }, { spacer: true }, { label: 'Share my recordings', kind: 'primary', value: true }];
+  const body = h('div', {}, [
+    firstTime ? h('div.contrib-badge', { html: `${icon('flower')}New in this version` }) : null,
+    contribTermsBody(st.terms),
+    h('p.hint.mt-12', { text: 'You can change this at any time in Engines, under Freesia Cloud.' })
+  ]);
+  const choice = await dialog({ title: st.terms.title, text: st.terms.summary, body, actions });
+  contribDialogOpen = false;
+  // Closed without answering: nothing changes, and the question comes back next launch
+  if (choice === null || choice === undefined) return false;
+  if (choice === st.enabled && st.decided) return choice;
+  await setContribution(choice);
+  return choice;
+}
+
+async function setContribution(enabled) {
+  const res = await api.cloudSetContribution(enabled, contribState?.version);
+  if (res?.error) { toast(res.error.message, 'error', 5000); checkContribution({ prompt: false }); return; }
+  contribState = res;
+  renderContribBlock();
+  toast(enabled ? 'Thank you. Your recordings now help train Freesia Voice.' : 'Sharing is off. Nothing new is kept.', 'success', 4000);
+  if (!enabled && res.shared?.recordings) {
+    const n = res.shared.recordings;
+    if (await confirmDialog(`Also delete the ${n} recording${n === 1 ? '' : 's'} you shared?`,
+      'They are removed from the server right away and never used again.', { ok: 'Delete them', cancel: 'Keep them', danger: true })) {
+      await deleteContributions();
+    }
+  }
+}
+
+async function deleteContributions() {
+  const res = await api.cloudDeleteContributions();
+  if (res?.error) { toast(res.error.message, 'error', 5000); return; }
+  contribState = res;
+  renderContribBlock();
+  toast(`Deleted ${res.deleted} clip${res.deleted === 1 ? '' : 's'} from the server`, 'success');
+}
+
+function renderContribBlock() {
+  const host = $('contribBlock');
+  if (!host) return;
+  const st = contribState;
+  host.replaceChildren();
+  if (!st || !engineState.cloud?.configured) return;
+  const n = st.shared?.recordings || 0;
+  const mins = (st.shared?.seconds || 0) / 60;
+  const amount = n
+    ? `You have shared ${n} recording${n === 1 ? '' : 's'} (${mins < 1 ? 'under a minute' : `${Math.round(mins)} min`}).`
+    : 'You have not shared any recordings.';
+  const input = h('input', { type: 'checkbox', 'aria-label': 'Share my recordings to train Freesia Voice' });
+  input.checked = !!st.enabled;
+  input.addEventListener('change', async () => {
+    if (input.checked) {
+      input.checked = false;
+      await showContributionTerms();
+    } else {
+      await setContribution(false);
+    }
+    input.checked = !!contribState?.enabled;
+  });
+  host.append(h('div.contrib-block' + (st.enabled ? '.on' : ''), {}, [
+    h('div.contrib-head', {}, [
+      h('span.engine-glyph', { html: icon('flower') }),
+      h('span.row-text', {}, [
+        h('span.row-title', { text: 'Help improve the voice engine' }),
+        h('span.row-desc', { style: { display: 'block' }, text: (st.enabled ? 'On. Recordings Freesia Cloud transcribes help train its speech model. ' : 'Off. Freesia Cloud keeps none of your audio. ') + amount })
+      ]),
+      h('span.switch', {}, [input, h('span.switch-track')])
+    ]),
+    h('div.btn-row', {}, [
+      h('button.btn.btn-ghost.btn-sm', { text: 'Read the terms', onclick: () => showContributionTerms() }),
+      n ? h('button.btn.btn-ghost.btn-sm', { text: 'Delete my shared recordings', onclick: async () => {
+        if (await confirmDialog('Delete every recording you shared?', 'They are removed from the server right away. This cannot be undone.', { ok: 'Delete', danger: true })) deleteContributions();
+      } }) : null
+    ])
   ]));
 }
 

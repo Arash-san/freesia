@@ -574,3 +574,15 @@ mark { background: color-mix(in srgb, var(--bloom-4) 40%, transparent); color: i
   .view { padding: 28px 24px 40px; }
   .engine-body-inner { padding-left: 18px; }
 }
+
+/* Voice contributions (Freesia Cloud) */
+.contrib-block { margin-top: 18px; padding: 14px 16px; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--raise); transition: border-color var(--t-med), background var(--t-med); animation: rise .5s var(--ease-out) both; }
+.contrib-block.on { border-color: color-mix(in srgb, var(--bloom-2) 45%, var(--line)); background: color-mix(in srgb, var(--bloom-2) 6%, var(--raise)); }
+.contrib-head { display: flex; align-items: center; gap: 14px; }
+.contrib-block.on .engine-glyph svg { color: var(--bloom-2); animation: petal-breathe 3.2s var(--ease-in-out) infinite; }
+.contrib-block .btn-row { margin-top: 10px; padding-left: 54px; }
+.contrib-terms { max-height: min(46vh, 380px); overflow-y: auto; padding: 4px 14px 4px 0; margin-right: -6px; }
+.contrib-terms p { color: var(--ink-2); font-size: 13px; line-height: 1.6; margin-top: 10px; animation: rise .5s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 60ms + 120ms); }
+.contrib-terms p:first-child { margin-top: 0; }
+.contrib-badge { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 14px; padding: 4px 10px 4px 8px; border-radius: var(--r-pill); font-size: 11.5px; font-weight: 600; letter-spacing: .02em; color: var(--ink); background: linear-gradient(var(--sheet), var(--sheet)) padding-box, var(--bloom) border-box; border: 1px solid transparent; animation: pop .5s var(--ease-out) both; }
+.contrib-badge svg { width: 14px; height: 14px; }

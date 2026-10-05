@@ -27,6 +27,17 @@ data class Transcription(
     val text: String, val duration: Double, val model: String?,
     val translated: Boolean = false, val sourceText: String? = null,
 )
+/** Terms the server shows before anyone can share recordings; a new [version] asks everyone again. */
+data class ContribTerms(val version: Int, val title: String, val summary: String, val paragraphs: List<String>)
+/**
+ * Voice contributions on a Freesia Voice server. [available] is false on servers
+ * without the feature, which never show it. [decided]: the account already answered
+ * this version of the terms, so it is not asked again.
+ */
+data class ContribState(
+    val available: Boolean, val version: Int = 0, val enabled: Boolean = false, val decided: Boolean = false,
+    val terms: ContribTerms? = null, val sharedRecordings: Int = 0, val sharedSeconds: Double = 0.0, val deleted: Int = 0,
+)
 data class UploadTimeouts(val connectMs: Long, val writeMs: Long, val readMs: Long, val callMs: Long)
 
 /**
@@ -109,6 +120,25 @@ class FreesiaApi(
          * Upload timeouts scaled to the recording: connect 15 s; write and read each
          * 60 s plus 1 s per second of audio; the whole call may take connect + write + read.
          */
+        fun parseContribution(json: JSONObject): ContribState {
+            if (!json.optBoolean("available", false)) return ContribState(available = false)
+            val t = json.optJSONObject("terms")
+            val terms = t?.let {
+                val arr = it.optJSONArray("paragraphs") ?: JSONArray()
+                ContribTerms(
+                    it.optInt("version"), it.optString("title"), it.optString("summary"),
+                    (0 until arr.length()).map { i -> arr.optString(i) }.filter { p -> p.isNotBlank() },
+                )
+            }
+            val shared = json.optJSONObject("shared") ?: JSONObject()
+            return ContribState(
+                available = terms != null && terms.paragraphs.isNotEmpty(), version = json.optInt("version"),
+                enabled = json.optBoolean("enabled"), decided = json.optBoolean("decided"), terms = terms,
+                sharedRecordings = shared.optInt("recordings"), sharedSeconds = shared.optDouble("seconds", 0.0),
+                deleted = json.optInt("deleted"),
+            )
+        }
+
         fun uploadTimeouts(durationSec: Double): UploadTimeouts {
             val io = (60 + kotlin.math.ceil(maxOf(0.0, durationSec))).toLong() * 1000
             return UploadTimeouts(connectMs = 15_000, writeMs = io, readMs = io, callMs = 15_000 + 2 * io)
@@ -185,6 +215,22 @@ class FreesiaApi(
         val json = execute(authed("/v1/chat/completions").post(body.toString().toRequestBody(JSON)).build(), timeoutMs)
         return json.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content")?.trim().orEmpty()
     }
+
+    /** Voice contributions. Servers without them (404/405) report [ContribState.available] = false. */
+    fun contribution(): ContribState = try {
+        parseContribution(execute(authed("/api/contribute").get().build(), 10_000))
+    } catch (e: ApiException) {
+        if (e.httpStatus == 404 || e.httpStatus == 405) ContribState(available = false) else throw e
+    }
+
+    /** Turning sharing on sends the version of the terms the user was shown; the server refuses any other. */
+    fun setContribution(enabled: Boolean, version: Int): ContribState {
+        val body = JSONObject().put("enabled", enabled).put("version", version).put("client", "android")
+        return parseContribution(execute(authed("/api/contribute").post(body.toString().toRequestBody(JSON)).build(), 10_000))
+    }
+
+    fun deleteContributions(): ContribState =
+        parseContribution(execute(authed("/api/contribute/recordings").delete().build(), 20_000))
 
     fun logout() {
         execute(authed("/api/auth/logout").post(ByteArray(0).toRequestBody(null)).build(), 6_000)

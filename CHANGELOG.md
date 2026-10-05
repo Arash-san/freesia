@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.1.0
+
+**Help train Freesia Voice, if you want to.** If you are signed in to InquireLab's Freesia Voice server, you can now share your recordings so its speech model gets better at the names, courses and terms you actually say. It stays off unless you turn it on. After this update Freesia asks you once, shows exactly what is shared and who can see it, and remembers your answer for your account on every device. You can change your mind at any time in Engines, under Freesia Cloud, where you can also see how much you have shared and delete all of it with one button. Other Freesia Voice servers and the other engines never show this and are not affected.
+
 ## 3.0.3
 
 **Esc no longer throws away what you said.** Esc still stops a dictation and types nothing, but the recording is now kept in History, where you can transcribe it or delete it. The floating pill confirms it with "Cancelled · Recording kept in History". This is on by default; turn off "Keep recordings cancelled with Esc" in Settings if you want Esc to discard, as before. Takes shorter than a second and a half are not kept.

@@ -22,9 +22,7 @@ const history = [
   ['So I was thinking we could move the GRPO training run to the new cluster tomorrow and then check the reward curves on Friday.', 'dictate-inject', 'cloud', 7],
   ['Hi Dr. Chen, thanks for the feedback on the draft. I have updated the methods section and re-run the ablations with three seeds.', 'dictate-inject', 'cloud', 11],
   ['سلام، امروز جلسه ساعت چهار برگزار می‌شود. لطفاً گزارش را قبل از جلسه بفرستید.', 'dictate-inject', 'local', 6],
-  ['- Deploy Qwen3-ASR
-- Wire up the gateway
-- Redesign Freesia', 'command', 'cloud', 5],
+  ['- Deploy Qwen3-ASR\n- Wire up the gateway\n- Redesign Freesia', 'command', 'cloud', 5],
   ['Let me know if Thursday at 3 works for the workshop, and I will book the room.', 'test', 'gemini', 6]
 ].map(([text, mode, engine, sec], i) => ({ id: now - i * 3600000 * (i > 2 ? 20 : 1), text, mode, engine, durationSec: sec, words: text.split(/\s+/).length, timestamp: new Date(now - i * 3600000 * (i > 2 ? 20 : 1)).toISOString() }));
 
@@ -94,6 +92,23 @@ app.whenReady().then(async () => {
     await main.webContents.executeJavaScript(`document.body.classList.remove('is-recording'); homeOrb.setState('processing')`);
     await sleep(900);
     await snap(main, `${theme}-home-processing`);
+    // Voice contributions: the Freesia Cloud block and the one-time question
+    const contrib = { available: true, version: 1, enabled: true, decided: true, shared: { recordings: 42, seconds: 1260, labeled: 40 },
+      terms: { version: 1, title: 'Help Freesia Voice understand you better', summary: 'You can let Freesia keep your recordings to train its speech model on the way you really talk. It stays off unless you turn it on.',
+        paragraphs: ['When this is on, each recording that Freesia Voice transcribes for you is saved on the InquireLab server with its transcript, its language and your custom vocabulary.',
+          'To get an accurate transcript for training, each saved recording is sent once to a paid speech service from OpenAI or Google.',
+          'Apart from that one request, nobody outside InquireLab gets your recordings.',
+          'You can turn this off at any time. One button deletes everything you shared, and deletion is immediate.'] } };
+    await main.webContents.executeJavaScript(`contribState = ${JSON.stringify(contrib)}; showView('engines'); renderCloudBody(); 1`);
+    await sleep(1300);
+    await main.webContents.executeJavaScript(`document.getElementById('contribBlock').scrollIntoView({ block: 'center' }); 1`);
+    await sleep(700);
+    await snap(main, `${theme}-engines-contrib`);
+    await main.webContents.executeJavaScript(`contribState = { ...contribState, enabled: false, decided: false }; void showContributionTerms({ firstTime: true }); 1`);
+    await sleep(1400);
+    await snap(main, `${theme}-contrib-question`);
+    await main.webContents.executeJavaScript(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); 1`);
+    await sleep(600);
     await main.webContents.executeJavaScript(`void openStyleEditor({ id: 'custom-x', name: 'Slack replies', icon: '💬', color: '#7CC4FF', description: 'Short team chat', prompt: 'Format this as a concise Slack message.', custom: true }); 1`);
     await sleep(900);
     await snap(main, `${theme}-dialog`);

@@ -136,6 +136,28 @@ function createCloudEngine({ store, secrets, fetchImpl = (...a) => fetch(...a), 
       const data = await call('/v1/audio/transcriptions', { method: 'POST', body: build(), timeoutMs: deadlineFor('cloud', durationSec) });
       return { text: String(data.text || '').trim(), model: data.model || 'Qwen3-ASR-1.7B' };
     },
+    // Voice contributions: the server owns the choice and the terms text, so
+    // every device shows the same terms and asks only once per version.
+    async contribution() {
+      try {
+        return await call('/api/contribute', { timeoutMs: 10000 });
+      } catch (e) {
+        // Servers without the feature (self-hosted, older) never show it
+        if (e.httpStatus === 404 || e.httpStatus === 405) return { available: false };
+        throw e;
+      }
+    },
+    async setContribution(enabled, version) {
+      return call('/api/contribute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !!enabled, version, client: 'desktop' }),
+        timeoutMs: 10000
+      });
+    },
+    async deleteContributions() {
+      return call('/api/contribute/recordings', { method: 'DELETE', timeoutMs: 20000 });
+    },
     async format(prompt, { temperature = 0.3, timeoutMs = 30000 } = {}) {
       const data = await call('/v1/chat/completions', {
         method: 'POST',

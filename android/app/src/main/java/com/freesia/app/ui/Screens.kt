@@ -505,6 +505,7 @@ fun SettingsScreen() {
                 })
             }
         }
+        ContributionCard()
 
         Spacer(Modifier.height(20.dp)); Eyebrow("Bubble"); Spacer(Modifier.height(8.dp))
         FCard {

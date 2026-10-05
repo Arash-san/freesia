@@ -201,6 +201,8 @@ private fun MainTabs() {
             }
         }
     }
+    // Voice contributions: asked once after the update, on servers that support them
+    ContributionPrompt()
     if (wide) {
         Row(Modifier.fillMaxSize()) {
             NavRail(tab, waiting) { tab = it }

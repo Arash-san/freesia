@@ -3,6 +3,16 @@
 Each `## <version>` section becomes the notes of the GitHub release `android-v<version>`
 (see `.github/workflows/android.yml` at the repository root).
 
+## 3.1.0
+
+**Help train Freesia Voice, if you want to.** If you are signed in to InquireLab's Freesia
+Voice server, you can now share your recordings so its speech model gets better at the
+names, courses and terms you actually say. It stays off unless you turn it on. After this
+update Freesia asks you once, shows exactly what is shared and who can see it, and
+remembers your answer for your account on every device. You can change your mind at any
+time in Settings, under Account, where you can also see how much you have shared and
+delete all of it. Other servers never show this.
+
 ## 3.0.3
 
 **Retry and Undo right next to the bubble**
