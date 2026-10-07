@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.1.1
+
+**Spelled names become words.** Freesia now joins names and words dictated letter by letter even when they are absent from your dictionary. For example, "H A M I D" becomes "Hamid". The cleanup runs after recognition and again after formatting, including when AI formatting is off. Common acronyms such as GPT, API and NAS retain their capitals, and dictionary entries keep their preferred spelling. Ordinary dotted initials such as "J. R. R. Tolkien" remain intact.
+
 ## 3.1.0
 
 **Help train Freesia Voice, if you want to.** If you are signed in to InquireLab's Freesia Voice server, you can now share your recordings so its speech model gets better at the names, courses and terms you actually say. It stays off unless you turn it on. After this update Freesia asks you once, shows exactly what is shared and who can see it, and remembers your answer for your account on every device. You can change your mind at any time in Engines, under Freesia Cloud, where you can also see how much you have shared and delete all of it with one button. Other Freesia Voice servers and the other engines never show this and are not affected.

@@ -53,13 +53,12 @@ class VocabTest {
     }
 
     @Test fun shortTermsAreNotMatchedLetterByLetter() {
-        // "GPU" has only 3 letters, so "g p u" is left alone; the whole word still is fixed
-        assertEquals("g p u and GPU", Vocab.apply("g p u and gpu", listOf("GPU")))
+        assertEquals("GPU and GPU", Vocab.apply("g p u and gpu", listOf("GPU")))
     }
 
     @Test fun exactMatchesAndOneLetterTermsAreLeftAlone() {
         assertEquals("PyTorch", Vocab.apply("PyTorch", listOf("PyTorch")))
-        assertEquals("a b c", Vocab.apply("a b c", listOf("a", " ")))
+        assertEquals("ABC", Vocab.apply("a b c", listOf("a", " ")))
         assertEquals("", Vocab.apply("", listOf("PyTorch")))
         assertEquals("", Vocab.apply(null, listOf("PyTorch")))
     }
@@ -67,6 +66,28 @@ class VocabTest {
     @Test fun regexCharactersInTermsAreLiteral() {
         assertEquals("I use C++ daily", Vocab.apply("I use c++ daily", listOf("C++")))
         assertEquals("see Node.js docs", Vocab.apply("see node js docs", listOf("Node.js")))
+    }
+
+    @Test fun unseenSpellingsJoinWithoutChangingInitialsOrProse() {
+        for ((source, expected) in listOf(
+            "Ask H A M I D to help." to "Ask Hamid to help.",
+            "M O J T A B A and R-E-Z-A" to "Mojtaba and Reza",
+            "H A M I D I need help" to "Hamid I need help",
+            "Use G P T, A P I and A I." to "Use GPT, API and AI.",
+            "spell B O please" to "spell Bo please",
+            "write all caps H A M I D" to "write all caps HAMID",
+            "ح م ی د" to "حمید",
+            "h a m i d" to "hamid",
+            "I a little later" to "I a little later",
+            "J. R. R. Tolkien" to "J. R. R. Tolkien",
+            "Ask H. A. M. I. D. about G. P. T." to "Ask Hamid about GPT.",
+            "A + B = C" to "A + B = C",
+            "H A\nM I D" to "H A\nMid",
+            "The cloud is cloudy." to "The cloud is cloudy.",
+        )) {
+            assertEquals(source, expected, Vocab.apply(source))
+            assertEquals(expected, Vocab.apply(expected))
+        }
     }
 
     @Test fun correctionReplacementIsLiteralText() {

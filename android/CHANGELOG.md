@@ -3,6 +3,10 @@
 Each `## <version>` section becomes the notes of the GitHub release `android-v<version>`
 (see `.github/workflows/android.yml` at the repository root).
 
+## 3.1.1
+
+**Spelled names become words.** Freesia now joins names and words dictated letter by letter even when they are absent from your dictionary. For example, "H A M I D" becomes "Hamid". The cleanup runs after recognition and again after formatting. Common acronyms such as GPT, API and NAS retain their capitals, and dictionary entries keep their preferred spelling. Ordinary dotted initials such as "J. R. R. Tolkien" remain intact.
+
 ## 3.1.0
 
 **Help train Freesia Voice, if you want to.** If you are signed in to InquireLab's Freesia
