@@ -30,6 +30,34 @@
     return (list || []).map((c) => ({ from: String(c.from || '').trim(), to: String(c.to || '').trim() })).filter((c) => c.from && c.to && c.from.toLowerCase() !== c.to.toLowerCase());
   }
 
+  const ACRONYMS = new Set('AI ML UI UX API CPU GPU GPT LLM ASR STT TTS NAS UPS USB URL HTTP HTTPS HTML CSS JSON SQL SSH SSL TLS DNS TCP UDP IP ID PDF CSV XML YAML NASA USA UK EU OU OK ABC DNA RNA MRI'.split(' '));
+  const SPELLING_RUN = /(?<![\p{L}\p{N}_.])\p{L}(?:(?:[ \t]+|[ \t]*[-‐‑–][ \t]*)\p{L})+(?![\p{L}\p{N}_])/gu;
+  const SPELLING_DOTTED = /(?<![\p{L}\p{N}_.])\p{L}\.(?:[ \t]*\p{L}\.)+(?![\p{L}\p{N}_])/gu;
+  const PRONOUN = /^[ \t]+(?:am|was|have|had|will|would|can|could|should|need|want|think|know|said|mean|like|love|use|do|did|don't|didn't)\b/i;
+
+  function normalizeSpelling(text) {
+    const replace = (run, offset) => {
+      const letters = run.match(/\p{L}/gu);
+      let suffix = '';
+      if (letters.length >= 4 && letters.at(-1) === 'I' && PRONOUN.test(text.slice(offset + run.length))) {
+        letters.pop();
+        suffix = ' I';
+      }
+      let word = letters.join('');
+      const before = text.slice(Math.max(0, offset - 60), offset);
+      const explicit = /\b(?:spell(?:ed|ing)?|letters?)\b[^.!?\n]*$/i.test(before);
+      if (run.includes('.') && letters.length < 4 && !ACRONYMS.has(word.toUpperCase()) && !explicit) return run;
+      if (letters.length < 3 && !ACRONYMS.has(word.toUpperCase()) && !explicit) return run;
+      const caps = /\b(?:all caps|uppercase|upper case|capital letters|acronym|initialism)\b[^.!?\n]*$/i.test(before);
+      if (ACRONYMS.has(word.toUpperCase()) || caps) word = word.toUpperCase();
+      else if (/^[A-Z]+$/.test(word)) word = word[0] + word.slice(1).toLowerCase();
+      if (run.includes('.') && !text.slice(offset + run.length).trim()) suffix += '.';
+      return word + suffix;
+    };
+    text = text.replace(SPELLING_DOTTED, replace);
+    return text.replace(SPELLING_RUN, replace);
+  }
+
   function apply(text, dictionary = [], corrections = []) {
     let out = String(text || '');
     if (!out) return out;
@@ -47,10 +75,10 @@
       const distinctive = tokens(term).length > 1 || /\d/.test(term) || /^[A-Z]{2,}$/.test(term) || /.[A-Z]/.test(term);
       out = out.replace(re, (m) => (m === term || (!distinctive && m.toLowerCase() === term.toLowerCase()) ? m : term));
     }
-    return out;
+    return normalizeSpelling(out);
   }
 
-  const api = { apply, tokens, termPattern, normalizeCorrections };
+  const api = { apply, tokens, termPattern, normalizeCorrections, normalizeSpelling };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.FreesiaVocab = api;
 })(typeof window !== 'undefined' ? window : globalThis);

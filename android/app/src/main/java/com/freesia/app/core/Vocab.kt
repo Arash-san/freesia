@@ -30,6 +30,34 @@ object Vocab {
     private val HAS_DIGIT = Regex("\\d")
     private val ALL_CAPS = Regex("^[A-Z]{2,}$")
     private val INNER_CAP = Regex(".[A-Z]")
+    private val ACRONYMS = "AI ML UI UX API CPU GPU GPT LLM ASR STT TTS NAS UPS USB URL HTTP HTTPS HTML CSS JSON SQL SSH SSL TLS DNS TCP UDP IP ID PDF CSV XML YAML NASA USA UK EU OU OK ABC DNA RNA MRI".split(" ").toSet()
+    private val SPELLING_RUN = Regex("(?<![\\p{L}\\p{N}_.])\\p{L}(?:(?:[ \\t]+|[ \\t]*[-‐‑–][ \\t]*)\\p{L})+(?![\\p{L}\\p{N}_])")
+    private val SPELLING_DOTTED = Regex("(?<![\\p{L}\\p{N}_.])\\p{L}\\.(?:[ \\t]*\\p{L}\\.)+(?![\\p{L}\\p{N}_])")
+    private val PRONOUN = Regex("^[ \\t]+(?:am|was|have|had|will|would|can|could|should|need|want|think|know|said|mean|like|love|use|do|did|don't|didn't)\\b", RegexOption.IGNORE_CASE)
+
+    /** Join unseen spellings after dictionary corrections, and after formatting. */
+    private fun normalizeRuns(text: String, pattern: Regex): String = pattern.replace(text) { m ->
+        val letters = Regex("\\p{L}").findAll(m.value).map { it.value }.toMutableList()
+        var suffix = ""
+        if (letters.size >= 4 && letters.last() == "I" && PRONOUN.containsMatchIn(text.substring(m.range.last + 1))) {
+            letters.removeAt(letters.lastIndex)
+            suffix = " I"
+        }
+        var word = letters.joinToString("")
+        val before = text.substring(maxOf(0, m.range.first - 60), m.range.first)
+        val explicit = Regex("\\b(?:spell(?:ed|ing)?|letters?)\\b[^.!?\\n]*$", RegexOption.IGNORE_CASE).containsMatchIn(before)
+        if ((letters.size < 3 || ('.' in m.value && letters.size < 4)) && word.uppercase() !in ACRONYMS && !explicit) {
+            m.value
+        } else {
+            val caps = Regex("\\b(?:all caps|uppercase|upper case|capital letters|acronym|initialism)\\b[^.!?\\n]*$", RegexOption.IGNORE_CASE).containsMatchIn(before)
+            if (word.uppercase() in ACRONYMS || caps) word = word.uppercase()
+            else if (Regex("^[A-Z]+$").matches(word)) word = word.take(1) + word.drop(1).lowercase()
+            if ('.' in m.value && text.substring(m.range.last + 1).isBlank()) suffix += "."
+            word + suffix
+        }
+    }
+
+    fun normalizeSpelling(text: String): String = normalizeRuns(normalizeRuns(text, SPELLING_DOTTED), SPELLING_RUN)
 
     private fun esc(s: String): String = SPECIAL.replace(s) { "\\" + it.value }
 
@@ -80,7 +108,7 @@ object Vocab {
                 if (v == term || (!distinctive && v.lowercase() == term.lowercase())) v else term
             }
         }
-        return out
+        return normalizeSpelling(out)
     }
 
     /**
