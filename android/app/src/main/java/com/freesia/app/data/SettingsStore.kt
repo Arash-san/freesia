@@ -12,6 +12,9 @@ import org.json.JSONObject
 import java.time.LocalDate
 
 data class AppSettings(
+    /** cloud | gemini. Existing installs continue using their Freesia Cloud account. */
+    val engine: String = "cloud",
+    val geminiModel: String = "auto",
     /** The Freesia Cloud server the user signed in to. Empty until they type one: there is no default. */
     val server: String = "",
     val username: String = "",
@@ -109,6 +112,8 @@ class SettingsStore(context: Context) {
             }.filter { it.from.isNotBlank() && it.to.isNotBlank() }
         } catch (e: Exception) { emptyList() }
         return AppSettings(
+            engine = prefs.getString("engine", d.engine)?.takeIf { it in listOf("cloud", "gemini") } ?: d.engine,
+            geminiModel = prefs.getString("geminiModel", d.geminiModel) ?: d.geminiModel,
             server = prefs.getString("server", d.server) ?: d.server,
             username = prefs.getString("username", "") ?: "",
             styleId = prefs.getString("styleId", d.styleId) ?: d.styleId,
@@ -133,6 +138,8 @@ class SettingsStore(context: Context) {
     }
 
     private fun save(s: AppSettings) = prefs.edit {
+        putString("engine", s.engine)
+        putString("geminiModel", s.geminiModel)
         putString("server", s.server)
         putString("username", s.username)
         putString("styleId", s.styleId)

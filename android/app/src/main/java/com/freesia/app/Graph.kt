@@ -1,6 +1,7 @@
 package com.freesia.app
 
 import com.freesia.app.core.FreesiaApi
+import com.freesia.app.core.GeminiApi
 import com.freesia.app.core.Vocab
 import com.freesia.app.data.HistoryStore
 import com.freesia.app.data.RecordingStore
@@ -22,6 +23,8 @@ object Graph {
     lateinit var app: Context; private set
     lateinit var settings: SettingsStore; private set
     lateinit var tokens: TokenStore; private set
+    lateinit var geminiKeys: TokenStore; private set
+    lateinit var gemini: GeminiApi; private set
     lateinit var history: HistoryStore; private set
     lateinit var recordings: RecordingStore; private set
     lateinit var api: FreesiaApi; private set
@@ -33,7 +36,8 @@ object Graph {
         app = context
         settings = SettingsStore(context)
         tokens = TokenStore(context)
-        reporter = ErrorReporter(context, settings) { listOf(tokens.get(), settings.value.server, settings.value.username) }
+        geminiKeys = TokenStore(context, "gemini")
+        reporter = ErrorReporter(context, settings) { listOf(tokens.get(), geminiKeys.get(), settings.value.server, settings.value.username) }
         reporter.installCrashHandler()
         history = HistoryStore(context)
         // Small JSON sidecars: loading them here keeps retry available right after a restart.
@@ -44,7 +48,9 @@ object Graph {
             token = { tokens.get() },
             onUnauthorized = { tokens.clear() },
         )
-        dictation = DictationController(context, settings, tokens, api, history, recordings, reporter)
+        gemini = GeminiApi(FreesiaApi.defaultHttpClient(), { geminiKeys.get() }, { settings.value.geminiModel })
+        dictation = DictationController(context, settings, tokens, api, history, recordings, reporter,
+            gemini = gemini, engineReady = { engineConfigured() })
         updates = UpdateManager(context, reporter)
         updates.checkIfDue() // at most every 6 hours
         // Reports queued offline or written by a crash go out shortly after start
@@ -52,6 +58,9 @@ object Graph {
         // Recordings left from last time (failed, interrupted, or cut off by a crash) get a background retry
         if (recordings.items.value.any { it.needsRetry && it.autoRetry }) RecoveryScheduler.schedule(context, 15_000, restart = false)
     }
+
+    fun engineConfigured(): Boolean =
+        if (settings.value.engine == "gemini") !geminiKeys.get().isNullOrEmpty() else !tokens.get().isNullOrEmpty()
 
     /**
      * Saves a taught correction, adds the right term to the dictionary, and fixes

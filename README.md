@@ -24,7 +24,7 @@ Freesia 3 no longer needs a paid API. It can transcribe with a self hosted serve
 
 ## Android
 
-Freesia for Android dictates into any app through an accessibility service: focus a text field, tap the floating bloom, speak, and the text lands at your cursor. It uses Freesia Cloud, keeps every recording until the text is delivered so a failed take can be retried, and updates itself from GitHub. Download `Freesia-Android-<version>.apk` from the newest [android release](https://github.com/Arash-san/freesia/releases?q=android&expanded=true). Details are in [android/README.md](android/README.md).
+Freesia for Android dictates into any app through an accessibility service: focus a text field, tap the floating bloom, speak, and the text lands at your cursor. Choose Freesia Cloud or Gemini in Settings → Speech engine → Configure. Gemini uses your Google AI Studio API key for transcription and formatting. The app keeps every recording until its text is delivered so a failed take can be retried, and updates itself from GitHub. Download `Freesia-Android-<version>.apk` from the newest [android release](https://github.com/Arash-san/freesia/releases?q=android&expanded=true). Details are in [android/README.md](android/README.md).
 
 ## Speech engines
 

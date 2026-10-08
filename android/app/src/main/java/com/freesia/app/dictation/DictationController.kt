@@ -85,9 +85,11 @@ class DictationController(
     private val history: HistoryStore,
     private val recordings: RecordingStore,
     private val reporter: ErrorReporter,
+    gemini: com.freesia.app.core.SpeechEngine? = null,
+    private val engineReady: () -> Boolean = { tokens.signedIn.value },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val pipeline = TranscriptPipeline(api)
+    private val pipeline = TranscriptPipeline(api, gemini = gemini)
     private val _state = MutableStateFlow(DictState())
     val state: StateFlow<DictState> = _state.asStateFlow()
     private val _level = MutableStateFlow(0f)
@@ -108,8 +110,8 @@ class DictationController(
     fun start(t: DictationTarget): Boolean {
         if (isBusy) return false
         job?.cancel()
-        if (!tokens.signedIn.value) {
-            fail(t.origin, "Sign in to Freesia first.", newSession = true)
+        if (!engineReady()) {
+            fail(t.origin, "Set up your selected speech engine in Settings first.", newSession = true)
             return false
         }
         val s = settings.value
@@ -295,8 +297,8 @@ class DictationController(
     fun retryInto(id: String, t: DictationTarget) {
         if (isBusy || id in _retrying.value) return
         val rec = recordings.get(id) ?: return
-        if (!tokens.signedIn.value) {
-            fail(t.origin, "Sign in to Freesia first.", newSession = true)
+        if (!engineReady()) {
+            fail(t.origin, "Set up your selected speech engine in Settings first.", newSession = true)
             return
         }
         job?.cancel()
@@ -436,8 +438,8 @@ class DictationController(
     /** "Retry" in Saved recordings. Runs in the controller's scope, so it finishes even if the user leaves the screen. */
     fun retry(id: String) {
         if (id in _retrying.value || recordings.get(id) == null) return
-        if (!tokens.signedIn.value) {
-            toast("Sign in to Freesia first.")
+        if (!engineReady()) {
+            toast("Set up your selected speech engine in Settings first.")
             return
         }
         scope.launch { recover(id, background = false) }
@@ -449,7 +451,7 @@ class DictationController(
      * still wait for a background retry.
      */
     suspend fun recoverInBackground(): Int {
-        if (!tokens.signedIn.value) return recordings.items.value.count { it.needsRetry && it.autoRetry }
+        if (!engineReady()) return recordings.items.value.count { it.needsRetry && it.autoRetry }
         var recovered = 0
         var remaining = 0
         for (rec in recordings.items.value.filter { it.needsRetry && it.autoRetry }) {

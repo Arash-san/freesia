@@ -4,6 +4,8 @@ import com.freesia.app.core.ApiException
 import com.freesia.app.core.Correction
 import com.freesia.app.core.FreesiaApi
 import com.freesia.app.core.RetryPolicy
+import com.freesia.app.core.SpeechEngine
+import com.freesia.app.core.Transcription
 import com.freesia.app.data.AppSettings
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -48,6 +50,51 @@ class TranscriptPipelineTest {
         MockResponse.Builder().code(code).addHeader("Content-Type", "application/json").body(body).build()
 
     private fun chat(text: String) = json(200, """{"choices":[{"message":{"role":"assistant","content":${org.json.JSONObject.quote(text)}}}]}""")
+
+    private fun geminiPipeline(engine: SpeechEngine) = TranscriptPipeline(
+        FreesiaApi(FreesiaApi.defaultHttpClient(), { server.url("/").toString() }, { token }, { signedOut++ }),
+        sleep = { waits += it }, gemini = engine,
+    )
+
+    @Test fun geminiHandlesRecognitionAndFormattingWithoutCloudCalls() {
+        var formatPrompt = ""
+        val engine = object : SpeechEngine {
+            override fun transcribe(audio: File, mime: String, language: String?, prompt: String?, durationSec: Double, translate: Boolean): Transcription {
+                assertEquals("fa", language); assertTrue(prompt!!.contains("PyTorch")); assertTrue(translate)
+                return Transcription("clodopus uses py torch", durationSec, "gemini-test")
+            }
+            override fun format(prompt: String): String { formatPrompt = prompt; return "Claude Opus uses py torch." }
+        }
+        val result = geminiPipeline(engine).run(audio, "audio/mp4", 3.1, settings.copy(engine = "gemini", styleId = "native", nativeLanguage = "fa"))
+        assertEquals("Claude Opus uses PyTorch.", result.text)
+        assertTrue(formatPrompt.contains("fluent, natural English"))
+        assertTrue(formatPrompt.contains("Claude Opus uses PyTorch"))
+        assertEquals(0, server.requestCount); assertEquals(0, signedOut)
+    }
+
+    @Test fun geminiFormattingFailureDeliversCorrectedRawText() {
+        val engine = object : SpeechEngine {
+            override fun transcribe(audio: File, mime: String, language: String?, prompt: String?, durationSec: Double, translate: Boolean) = Transcription("H A M I D uses py torch", durationSec, "gemini-test")
+            override fun format(prompt: String): String = throw ApiException(ApiException.Kind.AUTH, "Bad Gemini key")
+        }
+        val result = geminiPipeline(engine).run(audio, "audio/mp4", 2.0, settings.copy(engine = "gemini"))
+        assertEquals("Hamid uses PyTorch", result.text); assertFalse(result.formatted)
+        assertEquals(0, server.requestCount); assertEquals(0, signedOut)
+    }
+
+    @Test fun geminiRecognitionFailureKeepsAudioAndStopsOnQuota() {
+        var calls = 0
+        val engine = object : SpeechEngine {
+            override fun transcribe(audio: File, mime: String, language: String?, prompt: String?, durationSec: Double, translate: Boolean): Transcription {
+                calls++; throw ApiException(ApiException.Kind.CONFIG, "Quota exhausted")
+            }
+            override fun format(prompt: String): String = error("Must not format")
+        }
+        try { geminiPipeline(engine).run(audio, "audio/mp4", 2.0, settings.copy(engine = "gemini")); fail() }
+        catch (e: ApiException) { assertEquals(ApiException.Kind.CONFIG, e.kind) }
+        assertEquals(1, calls); assertTrue(audio.exists()); assertTrue(waits.isEmpty())
+        assertEquals(0, server.requestCount); assertEquals(0, signedOut)
+    }
 
     @Test fun correctsBeforeAndAfterFormattingAndSendsTheDictionaryAsPrompt() {
         server.enqueue(json(200, """{"text":"um we trained it in py torch with clodopus","duration":3.1}"""))

@@ -65,7 +65,6 @@ private const val STEPS = 5
 
 @Composable
 fun Onboarding(onDone: () -> Unit) {
-    val signedIn by Graph.tokens.signedIn.collectAsState()
     var step by rememberSaveable { mutableIntStateOf(0) }
     val t = LocalFreesia.current
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -89,8 +88,8 @@ fun Onboarding(onDone: () -> Unit) {
             label = "onboarding",
         ) { s ->
             when (s) {
-                0 -> WelcomeStep { step = if (signedIn) 2 else 1 }
-                1 -> SignInScreen(Modifier.fillMaxSize(), standalone = false) { step = 2 }
+                0 -> WelcomeStep { step = if (Graph.engineConfigured()) 2 else 1 }
+                1 -> EngineSetupScreen { step = 2 }
                 2 -> MicStep { step = 3 }
                 3 -> AccessibilityStep(onNext = { step = 4 }, onSkip = { step = 4 })
                 else -> TryItStep(onDone)
@@ -252,7 +251,7 @@ private fun AccessibilityStep(onNext: () -> Unit, onSkip: () -> Unit) {
                 Spacer(Modifier.height(10.dp))
                 Disclosure("What it accesses", "Which text field is focused on screen, and, only at the moment a dictation finishes, the text and cursor position of that one field so the transcript can be inserted at the cursor.")
                 Disclosure("What it never does", "It does not read or record what you type, never appears on or reads password fields, does not look at other screen content, and does not perform any action except inserting your dictation.")
-                Disclosure("Where data goes", "Your voice recording goes only to the Freesia Cloud server you signed in to, for transcription and style formatting. Field contents never leave the device. History, and any recording that could not be transcribed yet, stay on this phone.")
+                Disclosure("Where data goes", "Your voice recording goes to your selected engine: your Freesia Cloud server or Google Gemini. Field contents never leave the device. History and recordings awaiting a retry stay on this phone.")
                 Disclosure("Your control", "Turn it off any time in Settings → Accessibility, or hide the bubble for specific apps.")
             }
             Spacer(Modifier.height(16.dp))

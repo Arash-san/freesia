@@ -73,9 +73,10 @@ object Contributions {
 @Composable
 fun ContributionPrompt() {
     val signedIn by Graph.tokens.signedIn.collectAsState()
+    val settings by Graph.settings.flow.collectAsState()
     var show by remember { mutableStateOf<ContribState?>(null) }
-    LaunchedEffect(signedIn) {
-        if (!signedIn) { Contributions.clear(); return@LaunchedEffect }
+    LaunchedEffect(signedIn, settings.engine) {
+        if (!signedIn || settings.engine != "cloud") { show = null; Contributions.clear(); return@LaunchedEffect }
         kotlinx.coroutines.delay(1_200)
         val st = Contributions.refresh() ?: return@LaunchedEffect
         if (st.available && !st.decided && !Contributions.askedThisRun) {
@@ -135,7 +136,7 @@ fun ContributionDialog(state: ContribState, firstTime: Boolean, onDone: () -> Un
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                Text("You can change this at any time in Settings, under Account.", style = Type.bodySmall.copy(color = t.ink3))
+                Text("You can change this at any time in Settings, below Speech engine.", style = Type.bodySmall.copy(color = t.ink3))
             }
         },
         confirmButton = {
@@ -176,6 +177,9 @@ private fun DeleteSharedDialog(count: Int, onDone: () -> Unit) {
 /** Settings → Account: the switch, what was shared, the terms and deletion. Hidden on servers without the feature. */
 @Composable
 fun ContributionCard() {
+    val settings by Graph.settings.flow.collectAsState()
+    val signedIn by Graph.tokens.signedIn.collectAsState()
+    if (settings.engine != "cloud" || !signedIn) return
     val t = LocalFreesia.current
     val scope = rememberCoroutineScope()
     val st by Contributions.state.collectAsState()

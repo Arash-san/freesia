@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -344,7 +345,7 @@ fun StylesScreen() {
     val s by Graph.settings.flow.collectAsState()
     Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         ScreenHeader("Formatting", "Pick a *style*.")
-        Text("Your words are cleaned up on your Freesia server in this style before they are typed. Verbatim skips formatting.", style = Type.bodySmall.copy(color = t.ink3))
+        Text("Your selected engine applies this style before your words are typed. Verbatim skips formatting.", style = Type.bodySmall.copy(color = t.ink3))
         Spacer(Modifier.height(14.dp))
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Styles.builtIn.forEach { style ->
@@ -388,6 +389,9 @@ fun VocabularyScreen() {
     val s by Graph.settings.flow.collectAsState()
     var input by rememberSaveable { mutableStateOf("") }
     var teach by remember { mutableStateOf(false) }
+    var wordsExpanded by rememberSaveable { mutableStateOf(false) }
+    var correctionsExpanded by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
     val used = PromptBuilder.vocabularyPrompt(s.dictionary)?.length ?: 0
     fun add() {
         val words = input.split(',', '\n').map { it.trim() }.filter { it.isNotEmpty() }
@@ -397,8 +401,7 @@ fun VocabularyScreen() {
     Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         ScreenHeader("Custom words", "Your *vocabulary*.")
         Text(
-            "Names, places and jargon. They are sent to the recognizer as spelling hints, the formatter keeps them exactly as written, " +
-                "and Freesia fixes split or spelled-out versions (\"Py Torch\", \"P Y T O R C H\") on its own.",
+            "Add names and jargon as spelling hints. Freesia preserves them and joins letters spelled aloud.",
             style = Type.bodySmall.copy(color = t.ink3),
         )
         Spacer(Modifier.height(14.dp))
@@ -415,18 +418,26 @@ fun VocabularyScreen() {
         Spacer(Modifier.height(6.dp))
         Text("$used / ${PromptBuilder.MAX_VOCAB_PROMPT} characters used for recognizer hints", style = Type.eyebrow.copy(color = t.ink3))
         Spacer(Modifier.height(14.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Eyebrow("${s.dictionary.size} words", Modifier.weight(1f))
+            if (s.dictionary.size > 6 || wordsExpanded) GhostButton(if (wordsExpanded) "Show less" else "Show all", { wordsExpanded = !wordsExpanded })
+        }
+        if (wordsExpanded) {
+            FTextField(query, { query = it }, "Search words", placeholder = "Find a name…")
+            Spacer(Modifier.height(8.dp))
+        }
         if (s.dictionary.isEmpty()) Text("No words yet.", style = Type.body.copy(color = t.ink3))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            s.dictionary.forEach { w ->
+        FlowRow(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            (if (wordsExpanded) s.dictionary.filter { it.contains(query, true) } else s.dictionary.take(6)).forEach { w ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Chip("$w  ×", false, { Graph.settings.update { cur -> cur.copy(dictionary = cur.dictionary - w) } })
                 }
             }
         }
 
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(18.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Eyebrow("Corrections", Modifier.weight(1f))
+            Eyebrow("${s.corrections.size} corrections", Modifier.weight(1f))
             GhostButton("Teach one", { teach = true }, icon = FIcons.plus)
         }
         Spacer(Modifier.height(8.dp))
@@ -439,7 +450,8 @@ fun VocabularyScreen() {
             Text("None yet. Use “Fix a word” on any History item, or Teach one.", style = Type.body.copy(color = t.ink3))
         } else {
             FCard(Modifier.fillMaxWidth(), padding = PaddingValues(start = 16.dp, end = 6.dp, top = 4.dp, bottom = 4.dp)) {
-                s.corrections.forEachIndexed { i, c ->
+                Column(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
+                (if (correctionsExpanded) s.corrections else s.corrections.take(2)).forEachIndexed { i, c ->
                     if (i > 0) Hairline()
                     Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(c.from, style = Type.body.copy(color = t.ink3), modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -450,7 +462,9 @@ fun VocabularyScreen() {
                         })
                     }
                 }
+                }
             }
+            if (s.corrections.size > 2) GhostButton(if (correctionsExpanded) "Show fewer corrections" else "Show all corrections", { correctionsExpanded = !correctionsExpanded })
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -464,47 +478,17 @@ fun VocabularyScreen() {
 fun SettingsScreen() {
     val t = LocalFreesia.current
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
     val s by Graph.settings.flow.collectAsState()
     val bubbleRunning by FreesiaAccessibilityService.running.collectAsState()
     var a11y by remember { mutableStateOf(isAccessibilityEnabled(ctx)) }
     var mic by remember { mutableStateOf(hasMicPermission(ctx)) }
     LifecycleResumeEffect(bubbleRunning) { a11y = isAccessibilityEnabled(ctx); mic = hasMicPermission(ctx); onPauseOrDispose { } }
-    var serverDraft by rememberSaveable { mutableStateOf(s.server) }
-    var serverError by remember { mutableStateOf<String?>(null) }
     var pickLanguage by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         ScreenHeader("Freesia ${BuildConfig.VERSION_NAME}", "Settings")
 
-        Eyebrow("Account"); Spacer(Modifier.height(8.dp))
-        FCard {
-            SettingRow("Signed in as ${s.username.ifBlank { "…" }}", "Freesia Cloud · " + s.server.removePrefix("https://"))
-            Hairline()
-            Spacer(Modifier.height(10.dp))
-            FTextField(serverDraft, { serverDraft = it; serverError = null }, "Server", placeholder = FreesiaApi.SERVER_PLACEHOLDER)
-            if (serverError != null) Text(serverError!!, style = Type.bodySmall.copy(color = t.bad))
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                GhostButton("Save server", {
-                    try {
-                        val norm = FreesiaApi.normalizeServer(serverDraft)
-                        if (norm != s.server) {
-                            // A token belongs to one server: changing it signs out.
-                            Graph.tokens.clear()
-                            Graph.settings.update { it.copy(server = norm) }
-                        }
-                        serverDraft = norm
-                    } catch (e: Exception) { serverError = e.message }
-                }, enabled = serverDraft.trim() != s.server)
-                GhostButton("Sign out", {
-                    scope.launch {
-                        withContext(Dispatchers.IO) { try { Graph.api.logout() } catch (e: Exception) { } }
-                        Graph.tokens.clear()
-                    }
-                })
-            }
-        }
+        EngineSettingsCard()
         ContributionCard()
 
         Spacer(Modifier.height(20.dp)); Eyebrow("Bubble"); Spacer(Modifier.height(8.dp))
@@ -572,7 +556,7 @@ fun SettingsScreen() {
             UpdateSettingsRow()
             Spacer(Modifier.height(10.dp)); Hairline(); Spacer(Modifier.height(10.dp))
             Text(
-                "Freesia ${BuildConfig.VERSION_NAME} for Android. Recordings go only to your Freesia Cloud server; history stays on this phone. " +
+                "Freesia ${BuildConfig.VERSION_NAME} for Android. Recordings go to your selected engine: Freesia Cloud or Google Gemini. History stays on this phone. " +
                     "Fonts: Geist and Geist Mono (Vercel), Instrument Serif (Instrument), all under the SIL Open Font License 1.1 (see assets/licenses).",
                 style = Type.bodySmall.copy(color = t.ink3),
             )
@@ -596,6 +580,7 @@ private fun DiagnosticsSection() {
     val t = LocalFreesia.current
     val ctx = LocalContext.current
     val entries by Graph.reporter.log.entries.collectAsState()
+    var expanded by rememberSaveable { mutableStateOf(false) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Eyebrow("Diagnostics", Modifier.weight(1f))
         if (entries.isNotEmpty()) GhostButton("Copy", {
@@ -607,11 +592,10 @@ private fun DiagnosticsSection() {
     }
     Spacer(Modifier.height(8.dp))
     FCard(Modifier.fillMaxWidth()) {
-        Text("The last ${entries.size.coerceAtLeast(0)} of up to 50 errors, kept on this phone.", style = Type.bodySmall.copy(color = t.ink3))
-        if (entries.isEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            Text("No errors recorded.", style = Type.body.copy(color = t.ink3))
+        SettingRow("Local log", if (entries.isEmpty()) "No errors recorded" else "${entries.size} recent errors", onClick = { expanded = !expanded }) {
+            if (entries.isNotEmpty()) GhostButton(if (expanded) "Hide log" else "View log", { expanded = !expanded })
         }
+        if (expanded && entries.isNotEmpty()) Column(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
         entries.take(50).forEach { e ->
             Spacer(Modifier.height(8.dp))
             Hairline()
@@ -622,6 +606,7 @@ private fun DiagnosticsSection() {
                 style = Type.eyebrow.copy(color = t.ink3),
             )
             Text(e.message, style = Type.bodySmall.copy(color = t.ink2), maxLines = 4, overflow = TextOverflow.Ellipsis)
+        }
         }
     }
 }

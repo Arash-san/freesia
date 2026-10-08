@@ -6,6 +6,8 @@ import com.freesia.app.core.RetryPolicy
 import com.freesia.app.core.PromptBuilder
 import com.freesia.app.core.Styles
 import com.freesia.app.core.Vocab
+import com.freesia.app.core.SpeechEngine
+import com.freesia.app.core.CloudSpeechEngine
 import com.freesia.app.data.AppSettings
 import java.io.File
 
@@ -30,6 +32,7 @@ data class PipelineResult(val raw: String, val text: String, val formatted: Bool
 class TranscriptPipeline(
     private val api: FreesiaApi,
     private val sleep: (Long) -> Unit = Thread::sleep,
+    private val gemini: SpeechEngine? = null,
 ) {
     /**
      * @param retry automatic retries of the upload (network, timeout, 429, 5xx)
@@ -41,8 +44,11 @@ class TranscriptPipeline(
         onRetry: (attempt: Int, delayMs: Long, e: ApiException) -> Unit = { _, _, _ -> },
     ): PipelineResult {
         val style = Styles.byId(s.styleId)
+        val engine = if (s.engine == "gemini") gemini
+            ?: throw ApiException(ApiException.Kind.CONFIG, "Gemini is not configured. Add an API key in Settings.")
+        else CloudSpeechEngine(api)
         val transcription = retry.run(sleep, onRetry) {
-            api.transcribe(
+            engine.transcribe(
                 audio, mime,
                 PromptBuilder.transcriptionLanguage(style, s.language, s.nativeLanguage),
                 PromptBuilder.vocabularyPrompt(s.dictionary),
@@ -56,7 +62,7 @@ class TranscriptPipeline(
         if (transcription.translated) return PipelineResult(transcription.sourceText ?: raw, raw, true)
         val prompt = PromptBuilder.formatPrompt(style, raw, s.dictionary)
         val formatted = prompt?.let {
-            try { PromptBuilder.cleanModelOutput(api.chat(it), raw) } catch (e: Exception) { null }
+            try { PromptBuilder.cleanModelOutput(engine.format(it), raw) } catch (e: Exception) { null }
         }
         val text = Vocab.apply(formatted ?: raw, s.dictionary, s.corrections).trim().ifEmpty { raw }
         return PipelineResult(raw, text, formatted != null)

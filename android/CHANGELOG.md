@@ -3,6 +3,14 @@
 Each `## <version>` section becomes the notes of the GitHub release `android-v<version>`
 (see `.github/workflows/android.yml` at the repository root).
 
+## 3.2.0
+
+**Gemini on your phone.** Choose Freesia Cloud or Google Gemini during setup or in Settings → Speech engine → Configure. Gemini uses your Google AI Studio API key for transcription and style formatting. The key is encrypted on this phone with Android Keystore. Automatic mode discovers available Flash models; you can also choose a model yourself. Google API pricing and quota apply.
+
+**Compact controls.** Speech engine settings start collapsed. Vocabulary shows a short preview with search and Show all. Corrections also expand on demand. The local diagnostics log starts collapsed and scrolls in a limited area when opened. Copy still includes the full log.
+
+Saved recordings, vocabulary corrections and Native Language translation work with either engine. Gemini audio goes directly to Google. Training contributions are available only when Freesia Cloud is selected and you have signed in to a supported server.
+
 ## 3.1.1
 
 **Spelled names become words.** Freesia now joins names and words dictated letter by letter even when they are absent from your dictionary. For example, "H A M I D" becomes "Hamid". The cleanup runs after recognition and again after formatting. Common acronyms such as GPT, API and NAS retain their capitals, and dictionary entries keep their preferred spelling. Ordinary dotted initials such as "J. R. R. Tolkien" remain intact.

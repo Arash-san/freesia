@@ -96,7 +96,11 @@ fun HomeScreen(onOpenStyles: () -> Unit, onOpenSettings: () -> Unit, onOpenSaved
         when (Graph.dictation.state.value.phase) {
             Phase.RECORDING -> Graph.dictation.stop()
             Phase.PROCESSING -> Unit
-            else -> if (hasMicPermission(ctx)) Graph.dictation.start(Scratch.target) else permLauncher.launch(runtimePermissions())
+            else -> when {
+                !Graph.engineConfigured() -> onOpenSettings()
+                hasMicPermission(ctx) -> Graph.dictation.start(Scratch.target)
+                else -> permLauncher.launch(runtimePermissions())
+            }
         }
     }
 
@@ -106,7 +110,12 @@ fun HomeScreen(onOpenStyles: () -> Unit, onOpenSettings: () -> Unit, onOpenSaved
     var engineError by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
     LifecycleResumeEffect(Unit) { refresh++; onPauseOrDispose { } }
-    LaunchedEffect(refresh) {
+    val hasKey by Graph.geminiKeys.signedIn.collectAsState()
+    val signedIn by Graph.tokens.signedIn.collectAsState()
+    LaunchedEffect(refresh, s.engine, s.server, signedIn, hasKey) {
+        me = null; latency = null; engineError = null
+        if (s.engine == "gemini") return@LaunchedEffect
+        if (!signedIn) { engineError = "Sign in from Settings"; return@LaunchedEffect }
         val t0 = System.currentTimeMillis()
         try {
             me = withContext(Dispatchers.IO) { Graph.api.me() }
@@ -230,9 +239,10 @@ fun HomeScreen(onOpenStyles: () -> Unit, onOpenSettings: () -> Unit, onOpenSaved
                 Eyebrow("Engine")
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    StatusDot(engineError == null && me != null)
+                    StatusDot(if (s.engine == "gemini") hasKey else engineError == null && me != null)
                     Text(
                         when {
+                            s.engine == "gemini" -> if (hasKey) "Google Gemini · key saved" else "Gemini · add an API key"
                             engineError != null -> engineError!!
                             me != null -> "Freesia Cloud · connected"
                             else -> "Checking…"
@@ -242,10 +252,12 @@ fun HomeScreen(onOpenStyles: () -> Unit, onOpenSettings: () -> Unit, onOpenSaved
                     latency?.takeIf { engineError == null }?.let { Text("$it ms", style = Type.eyebrow.copy(color = t.ink3)) }
                 }
                 Text(
-                    listOfNotNull(s.username.ifBlank { me?.username ?: "" }.ifBlank { null }, s.server.removePrefix("https://").ifBlank { null }, me?.asrModel)
+                    if (s.engine == "gemini") (if (s.geminiModel == "auto") "Automatic model selection" else s.geminiModel)
+                    else listOfNotNull(s.username.ifBlank { me?.username ?: "" }.ifBlank { null }, s.server.removePrefix("https://").ifBlank { null }, me?.asrModel)
                         .joinToString(" · "),
                     style = Type.bodySmall.copy(color = t.ink3),
                 )
+                if (!Graph.engineConfigured()) GhostButton("Set up engine", onOpenSettings)
                 Spacer(Modifier.height(10.dp))
                 Hairline()
                 Spacer(Modifier.height(10.dp))

@@ -68,7 +68,7 @@ class ErrorReporter(
         return ErrorReport.build(
             installId, BuildConfig.VERSION_NAME, platform, Build.VERSION.RELEASE.orEmpty(),
             level, "android:$where", text, e?.stackTraceToString(), secrets(),
-        )
+        ).copy(engine = settings.value.engine)
     }
 
     /** Sends whatever is queued, if reporting is on. */

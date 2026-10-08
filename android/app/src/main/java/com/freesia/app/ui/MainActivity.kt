@@ -144,7 +144,6 @@ enum class Tab(val label: String, val icon: ImageVector) {
 fun AppRoot() {
     val t = LocalFreesia.current
     val s by Graph.settings.flow.collectAsState()
-    val signedIn by Graph.tokens.signedIn.collectAsState()
     Box(Modifier.fillMaxSize().background(t.bg)) {
         when {
             // Setup screens stay phone-width, centred, on tablets
@@ -152,9 +151,6 @@ fun AppRoot() {
                 Box(Modifier.fillMaxHeight().widthIn(max = 560.dp)) {
                     Onboarding(onDone = { Graph.settings.update { it.copy(onboarded = true) } })
                 }
-            }
-            !signedIn -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-                SignInScreen(modifier = Modifier.fillMaxHeight().widthIn(max = 560.dp), standalone = true, onSignedIn = {})
             }
             else -> MainTabs()
         }
