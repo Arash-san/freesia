@@ -3,10 +3,18 @@
 Freesia for Android brings the desktop app's dictation to every text field on the phone.
 When you tap into a text field in any app, a small floating "bloom" bubble appears at the
 edge of the screen. You tap the bubble and speak. You tap it again (or pause) to stop.
-Freesia sends the recording to your Freesia Cloud server, formats the transcript in the
+Freesia sends the recording to your selected engine, formats the transcript in the
 style you picked, and types the result into that field at the cursor.
 
-Version 3.0.1 · package `com.freesia.app` · minSdk 26 (Android 8.0) · targetSdk and compileSdk 37 (Android 17, the newest stable release in September 2026).
+Version 3.2.0 · package `com.freesia.app` · minSdk 26 (Android 8.0) · targetSdk and compileSdk 37 (Android 17).
+
+## Choose a speech engine
+
+Choose Freesia Cloud or Gemini during onboarding, or open Settings → Speech engine → Configure later. Cloud uses your server address and account. Gemini works without a Cloud account and uses your Google AI Studio API key for both speech recognition and style formatting. Save and test validates the key before replacing an existing key. Automatic mode discovers available stable Flash models; the model menu lets you select another supported Gemini model.
+
+The Cloud token and Gemini key use separate AES 256 GCM entries and separate Android Keystore keys. Signing out of Cloud preserves the Gemini key, and removing the Gemini key preserves the Cloud account. Keys travel in request headers and are redacted from diagnostics. Gemini audio goes directly to Google, whose API pricing and quota apply. Large recordings use Google's Files API and Freesia requests deletion after each transcription attempt. Training contributions appear only in Cloud mode on supported servers.
+
+The bubble, Home dictation, saved recording Retry and background recovery use the selected engine. Vocabulary cleanup runs before and after formatting with either engine. Native Language translates through the selected provider. If formatting fails, the raw transcript is delivered; if recognition fails, the recording stays available for retry.
 
 ## How it works
 
@@ -22,7 +30,7 @@ Version 3.0.1 · package `com.freesia.app` · minSdk 26 (Android 8.0) · targetS
 | Recorder | `audio/AudioCapture.kt`, `core/Audio.kt` | Records 16 kHz mono PCM from the `VOICE_RECOGNITION` source straight into a WAV file in `files/recordings/`, and reports the level for the orb. It stops by itself after a configurable silence, ends the take (keeping the audio) if Android takes the microphone away, and detects when Android has silenced the microphone. |
 | Encoder | `audio/AacEncoder.kt` | After the take, encodes the WAV to AAC-LC at 32 kbps in an ADTS stream (`.aac`, about 4 KB/s). If the device codec misbehaves, the WAV is uploaded instead. See "Recording format" below. |
 | Text insertion | `service/TextInserter.kt`, `core/TextSplice.kt` | See "Text insertion" below. |
-| API client | `core/FreesiaApi.kt` | OkHttp client for the Freesia Cloud API. There is no built-in server: the user types it on the sign-in screen (Server, Username, Password). It must be `https://`; plain `http://` is accepted only for `localhost` and `127.0.0.1` (the network security config allows cleartext for those two hosts only). On HTTP 401 it clears the token and the app returns to sign-in. |
+| API clients | `core/FreesiaApi.kt`, `core/GeminiApi.kt`, `core/SpeechEngine.kt` | Cloud uses your server and account. Gemini uses Google's REST API, model discovery, inline audio or resumable file upload. Cloud 401 clears only the Cloud token. Gemini errors preserve the Cloud account. |
 | Styles and prompt | `core/Styles.kt`, `core/PromptBuilder.kt` | All 12 desktop styles, with the same ids, names, icons and prompts. The formatting prompt matches the desktop `buildFormatPrompt` (without the desktop-only snippets and tools). |
 | Token storage | `data/TokenStore.kt` | The device token is encrypted with AES-256-GCM. The key is generated inside the Android Keystore and cannot be exported. |
 | UI | `ui/…` | Jetpack Compose screens: onboarding, Home (orb, scratch pad, engine status, words today), History, Styles, Vocabulary and Settings. The orb (`ui/orb/BloomOrb.kt`) ports `src/renderer/js/orb.js` to Compose Canvas, including the slow processing morph (below). |
