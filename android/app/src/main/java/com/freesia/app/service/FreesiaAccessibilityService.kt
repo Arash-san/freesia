@@ -1,7 +1,6 @@
 package com.freesia.app.service
 
 import com.freesia.app.Graph
-import com.freesia.app.data.toggledTranslate
 import com.freesia.app.dictation.Delivery
 import com.freesia.app.dictation.DictationTarget
 import com.freesia.app.dictation.Origin
@@ -52,7 +51,7 @@ class FreesiaAccessibilityService : AccessibilityService() {
             onRetry = ::onChipRetry,
             onUndo = { Graph.dictation.undoLast(); bubble.hapticConfirm() },
             onCancel = { Graph.dictation.cancel(); bubble.hapticReject() },
-            onToggleTranslate = { Graph.settings.update { it.toggledTranslate() }; bubble.hapticConfirm() },
+            onToggleTranslate = { Graph.dictation.toggleTranslate(); bubble.hapticConfirm() },
             onDismissSaved = { Graph.dictation.dismissSaved() },
         )
         bubble = BubbleOverlay(this, onTap = ::onBubbleTap, onLongPress = ::onBubbleLongPress, chips = chips)

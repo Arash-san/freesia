@@ -87,7 +87,7 @@ fun HomeScreen(onOpenStyles: () -> Unit, onOpenSettings: () -> Unit, onOpenSaved
     val waiting = recordings.count { it.needsRetry }
     val mine = st.origin == Origin.APP
     val phase = if (mine) st.phase else Phase.IDLE
-    val style = Styles.byId(s.styleId)
+    val style = Styles.byId(if (mine && (phase == Phase.RECORDING || phase == Phase.PROCESSING)) st.takeStyle.styleId else s.styleId)
 
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         if (hasMicPermission(ctx)) Graph.dictation.start(Scratch.target)
@@ -166,6 +166,12 @@ fun HomeScreen(onOpenStyles: () -> Unit, onOpenSettings: () -> Unit, onOpenSaved
 
         }
         val orbPart: @Composable ColumnScope.() -> Unit = {
+            if (phase == Phase.RECORDING) {
+                Row(Modifier.align(Alignment.CenterHorizontally), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GhostButton(if (st.takeStyle.translating) "Translate on" else "Translate off", { Graph.dictation.toggleTranslate() })
+                    GhostButton("Cancel", { Graph.dictation.cancel() })
+                }
+            }
             // The orb
             Box(
                 Modifier.fillMaxWidth().then(orbSize).aspectRatio(1f).align(Alignment.CenterHorizontally)

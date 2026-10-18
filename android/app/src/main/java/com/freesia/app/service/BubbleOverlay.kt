@@ -1,5 +1,7 @@
 package com.freesia.app.service
 
+import com.freesia.app.data.selectStyle
+
 import com.freesia.app.Graph
 import com.freesia.app.core.Styles
 import com.freesia.app.dictation.Origin
@@ -350,7 +352,7 @@ class BubbleOverlay(
                     screenHeightPx = sh,
                     appLabel = appLabel,
                     onPick = { id ->
-                        Graph.settings.update { it.copy(styleId = id) }
+                        Graph.settings.update { it.selectStyle(id) }
                         hapticConfirm()
                         hidePicker()
                     },

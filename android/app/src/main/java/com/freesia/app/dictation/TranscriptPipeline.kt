@@ -33,7 +33,14 @@ class TranscriptPipeline(
     private val api: FreesiaApi,
     private val sleep: (Long) -> Unit = Thread::sleep,
     private val gemini: SpeechEngine? = null,
+    private val onTiming: (String, Long) -> Unit = { _, _ -> },
 ) {
+    private fun <T> timed(stage: String, block: () -> T): T {
+        val start = System.nanoTime()
+        try { return block() } finally {
+            runCatching { onTiming(stage, (System.nanoTime() - start) / 1_000_000) }
+        }
+    }
     /**
      * @param retry automatic retries of the upload (network, timeout, 429, 5xx)
      * @param onRetry called before each wait, e.g. to show "Retrying…"
@@ -47,14 +54,16 @@ class TranscriptPipeline(
         val engine = if (s.engine == "gemini") gemini
             ?: throw ApiException(ApiException.Kind.CONFIG, "Gemini is not configured. Add an API key in Settings.")
         else CloudSpeechEngine(api)
-        val transcription = retry.run(sleep, onRetry) {
-            engine.transcribe(
-                audio, mime,
-                PromptBuilder.transcriptionLanguage(style, s.language, s.nativeLanguage),
-                PromptBuilder.vocabularyPrompt(s.dictionary),
-                durationSec,
-                translate = style.id == "native",
-            )
+        val transcription = timed(if (style.id == "native") "translation request" else "recognition request") {
+            retry.run(sleep, onRetry) {
+                engine.transcribe(
+                    audio, mime,
+                    PromptBuilder.transcriptionLanguage(style, s.language, s.nativeLanguage),
+                    PromptBuilder.vocabularyPrompt(s.dictionary),
+                    durationSec,
+                    translate = style.id == "native",
+                )
+            }
         }
         val raw = Vocab.apply(transcription.text.trim(), s.dictionary, s.corrections).trim()
         if (raw.isEmpty()) return PipelineResult("", "", false)
@@ -62,7 +71,7 @@ class TranscriptPipeline(
         if (transcription.translated) return PipelineResult(transcription.sourceText ?: raw, raw, true)
         val prompt = PromptBuilder.formatPrompt(style, raw, s.dictionary)
         val formatted = prompt?.let {
-            try { PromptBuilder.cleanModelOutput(engine.format(it), raw) } catch (e: Exception) { null }
+            timed("formatting request") { try { PromptBuilder.cleanModelOutput(engine.format(it), raw) } catch (e: Exception) { null } }
         }
         val text = Vocab.apply(formatted ?: raw, s.dictionary, s.corrections).trim().ifEmpty { raw }
         return PipelineResult(raw, text, formatted != null)

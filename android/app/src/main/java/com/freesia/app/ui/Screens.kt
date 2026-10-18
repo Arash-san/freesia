@@ -9,6 +9,8 @@ import com.freesia.app.core.Styles
 import com.freesia.app.data.HistoryItem
 import com.freesia.app.data.RecordingStore
 import com.freesia.app.data.SavedRecording
+import com.freesia.app.data.selectStyle
+import com.freesia.app.data.toggledTranslate
 import com.freesia.app.service.FreesiaAccessibilityService
 import com.freesia.app.ui.theme.LocalFreesia
 import com.freesia.app.ui.theme.Type
@@ -351,7 +353,7 @@ fun StylesScreen() {
             Styles.builtIn.forEach { style ->
                 val selected = style.id == s.styleId
                 FCard(
-                    Modifier.fillMaxWidth().clickable { Graph.settings.update { it.copy(styleId = style.id) } },
+                    Modifier.fillMaxWidth().clickable { Graph.settings.update { it.selectStyle(style.id) } },
                     highlighted = selected,
                     padding = PaddingValues(16.dp),
                 ) {
@@ -515,6 +517,12 @@ fun SettingsScreen() {
 
         Spacer(Modifier.height(20.dp)); Eyebrow("Dictation"); Spacer(Modifier.height(8.dp))
         FCard {
+            SettingRow("Translate by default",
+                if (s.styleId == "native") "On · every recording is translated to English"
+                else "Off · the microphone translation button affects one recording") {
+                FSwitch(s.styleId == "native") { Graph.settings.update { it.toggledTranslate() } }
+            }
+            Hairline()
             SettingRow("Stop on silence", if (s.autoStop) "After ${"%.1f".format(s.autoStopSeconds)} s of quiet" else "Off · tap the bloom to finish") {
                 FSwitch(s.autoStop) { v -> Graph.settings.update { it.copy(autoStop = v) } }
             }
@@ -574,7 +582,7 @@ fun ErrorReportsRow() {
     }
 }
 
-/** Settings → Diagnostics: the last 50 errors, kept on this phone, with Copy. */
+/** Settings → Diagnostics: the last 50 events, including local stage timings, with Copy. */
 @Composable
 private fun DiagnosticsSection() {
     val t = LocalFreesia.current
@@ -592,7 +600,7 @@ private fun DiagnosticsSection() {
     }
     Spacer(Modifier.height(8.dp))
     FCard(Modifier.fillMaxWidth()) {
-        SettingRow("Local log", if (entries.isEmpty()) "No errors recorded" else "${entries.size} recent errors", onClick = { expanded = !expanded }) {
+        SettingRow("Local log", if (entries.isEmpty()) "No events recorded" else "${entries.size} recent events", onClick = { expanded = !expanded }) {
             if (entries.isNotEmpty()) GhostButton(if (expanded) "Hide log" else "View log", { expanded = !expanded })
         }
         if (expanded && entries.isNotEmpty()) Column(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
