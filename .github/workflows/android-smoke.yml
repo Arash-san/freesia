@@ -43,11 +43,16 @@ jobs:
       - name: Boot a disposable emulator with KVM
         run: |
           sudo chmod 666 /dev/kvm
-          echo no | avdmanager create avd -n smoke -k 'system-images;android-36;google_apis;x86_64' -d pixel_7
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/freesia-avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
+          echo no | avdmanager create avd -n smoke -p "$ANDROID_AVD_HOME/smoke.avd" -k 'system-images;android-36;google_apis;x86_64' -d pixel_7
+          test -f "$ANDROID_AVD_HOME/smoke.ini"
+          emulator -list-avds
           sudo ln -s "$GITHUB_WORKSPACE/android" /work
           emulator -avd smoke -no-window -no-boot-anim -no-snapshot -gpu swangle_indirect -accel on -noaudio -no-metrics > android/dist/emulator.log 2>&1 &
       - name: Check upgrade and recording translation state
-        run: python3 android/docker/translation_ui_smoke.py
+        run: timeout 600s python3 android/docker/translation_ui_smoke.py
       - name: Retain UI evidence
         if: always()
         uses: actions/upload-artifact@v4

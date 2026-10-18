@@ -36,7 +36,7 @@ class MockCloud(BaseHTTPRequestHandler):
 
 
 def adb(*args):
-    return subprocess.check_output(['adb', *args])
+    return subprocess.check_output(['adb', *args], timeout=90)
 
 
 def nodes():
@@ -101,8 +101,10 @@ def value(key):
 
 
 adb('wait-for-device')
-for _ in range(900):
+print('Emulator connected; waiting for Android boot', flush=True)
+for attempt in range(240):
     if adb('shell', 'getprop', 'sys.boot_completed').strip() == b'1': break
+    if attempt % 30 == 0: print(f'Waiting for boot ({attempt}s)', flush=True)
     time.sleep(1)
 else: raise RuntimeError('Emulator did not boot')
 adb('root'); adb('wait-for-device')
