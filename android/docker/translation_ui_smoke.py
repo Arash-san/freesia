@@ -56,7 +56,9 @@ def nodes():
 
 
 def find(text):
-    return next((n for n in nodes() if text in n.get('text', '')), None)
+    current = nodes()
+    return (next((n for n in current if n.get('text') == text), None)
+            or next((n for n in current if text in n.get('text', '')), None))
 
 
 def tap_node(n):
