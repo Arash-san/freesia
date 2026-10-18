@@ -172,8 +172,14 @@ tap('Settings'); tap('Configure'); tap('Sign in')
 fields = [n for n in nodes() if n.get('class') == 'android.widget.EditText']
 check(len(fields) == 3, 'Cloud sign-in has three fields')
 tap_node(fields[1]); adb('shell', 'input', 'text', 'probe')
+adb('shell', 'input', 'keyevent', '4')
+time.sleep(1)
+# The keyboard resizes the form. Never reuse pre-keyboard field coordinates.
+fields = [n for n in nodes() if n.get('class') == 'android.widget.EditText']
 tap_node(fields[2]); adb('shell', 'input', 'text', 'dummy-password')
 adb('shell', 'input', 'keyevent', '4')
+time.sleep(1)
+shot('mock-sign-in')
 buttons = [n for n in nodes() if n.get('text') == 'Sign in']
 tap_node(buttons[-1])
 wait_text('Signed in as probe')
