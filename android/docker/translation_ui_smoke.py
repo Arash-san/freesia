@@ -7,6 +7,7 @@ Requires both 3.2.0 and 3.2.1 APKs in dist. Evidence goes to dist/translation-ui
 import json
 import re
 import subprocess
+import sys
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -40,10 +41,18 @@ def adb(*args):
 
 
 def nodes():
-    adb('shell', 'uiautomator', 'dump', '/sdcard/ui.xml')
-    data = adb('shell', 'cat', '/sdcard/ui.xml')
-    (OUT / 'latest.xml').write_bytes(data)
-    return [n.attrib for n in ET.fromstring(data).iter('node')]
+    for _ in range(5):
+        adb('shell', 'rm', '-f', '/sdcard/ui.xml')
+        adb('shell', 'uiautomator', 'dump', '/sdcard/ui.xml')
+        try:
+            data = adb('shell', 'cat', '/sdcard/ui.xml')
+            tree = ET.fromstring(data)
+        except (subprocess.CalledProcessError, ET.ParseError):
+            time.sleep(1)
+            continue
+        (OUT / 'latest.xml').write_bytes(data)
+        return [n.attrib for n in tree.iter('node')]
+    raise AssertionError('Android did not expose a UI hierarchy')
 
 
 def find(text):
@@ -77,6 +86,20 @@ def shot(name):
     (OUT / (name+'.png')).write_bytes(adb('exec-out', 'screencap', '-p'))
 
 
+def failed(kind, error, traceback):
+    for name, args in {
+        'failure.png': ('exec-out', 'screencap', '-p'),
+        'logcat.txt': ('logcat', '-d', '-t', '2000'),
+        'activity.txt': ('shell', 'dumpsys', 'activity', 'activities'),
+    }.items():
+        try: (OUT / name).write_bytes(adb(*args))
+        except Exception: pass
+    sys.__excepthook__(kind, error, traceback)
+
+
+sys.excepthook = failed
+
+
 def launch():
     adb('shell', 'am', 'start', '-n', PKG+'/.ui.MainActivity')
     time.sleep(3)
@@ -108,6 +131,11 @@ for attempt in range(240):
     time.sleep(1)
 else: raise RuntimeError('Emulator did not boot')
 adb('root'); adb('wait-for-device')
+adb('shell', 'input', 'keyevent', 'KEYCODE_WAKEUP')
+adb('shell', 'wm', 'dismiss-keyguard')
+adb('shell', 'svc', 'power', 'stayon', 'true')
+for setting in ('window_animation_scale', 'transition_animation_scale', 'animator_duration_scale'):
+    adb('shell', 'settings', 'put', 'global', setting, '0')
 adb('logcat', '-c')
 mock = ThreadingHTTPServer(('127.0.0.1', 8787), MockCloud)
 threading.Thread(target=mock.serve_forever, daemon=True).start()
