@@ -51,6 +51,26 @@ class TranscriptPipelineTest {
 
     private fun chat(text: String) = json(200, """{"choices":[{"message":{"role":"assistant","content":${org.json.JSONObject.quote(text)}}}]}""")
 
+    @Test fun localTimingCallbackReportsStagesWithoutTranscriptOrChangingOutput() {
+        server.enqueue(json(200, """{"text":"hello"}""")); server.enqueue(chat("Hello."))
+        val stages = mutableListOf<String>()
+        val p = TranscriptPipeline(
+            FreesiaApi(FreesiaApi.defaultHttpClient(), { server.url("/").toString() }, { token }, {}),
+            onTiming = { stage, ms -> assertTrue(ms >= 0); stages += stage },
+        )
+        assertEquals("Hello.", p.run(audio, "audio/mp4", 1.0, settings).text)
+        assertEquals(listOf("recognition request", "formatting request"), stages)
+    }
+
+    @Test fun diagnosticFailureCannotLoseTranscript() {
+        server.enqueue(json(200, """{"text":"hello"}"""))
+        val p = TranscriptPipeline(
+            FreesiaApi(FreesiaApi.defaultHttpClient(), { server.url("/").toString() }, { token }, {}),
+            onTiming = { _, _ -> error("Diagnostic storage failure") },
+        )
+        assertEquals("hello", p.run(audio, "audio/mp4", 1.0, settings.copy(styleId = "verbatim")).text)
+    }
+
     private fun geminiPipeline(engine: SpeechEngine) = TranscriptPipeline(
         FreesiaApi(FreesiaApi.defaultHttpClient(), { server.url("/").toString() }, { token }, { signedOut++ }),
         sleep = { waits += it }, gemini = engine,

@@ -1,7 +1,6 @@
 package com.freesia.app.service
 
 import com.freesia.app.Graph
-import com.freesia.app.data.NATIVE_STYLE
 import com.freesia.app.dictation.Origin
 import com.freesia.app.dictation.Phase
 import com.freesia.app.ui.theme.DarkTokens
@@ -59,7 +58,7 @@ import kotlin.math.roundToInt
  * window (not focusable, so the keyboard and the field keep focus):
  *
  *  - recording: elapsed time, a "Translate" switch (Native Language on/off for
- *    this and later takes) and cancel;
+ *    this take only) and cancel;
  *  - a take that could not be transcribed: Retry (into the same field) and ✕;
  *  - just after an insertion: Undo.
  *
@@ -143,7 +142,6 @@ private fun Chips(
     onDismissSaved: () -> Unit,
 ) {
     val st by Graph.dictation.state.collectAsState()
-    val s by Graph.settings.flow.collectAsState()
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val ticking = st.phase == Phase.RECORDING || st.undoUntil > now
     LaunchedEffect(ticking, st.session) {
@@ -182,8 +180,9 @@ private fun Chips(
                     )
                 }
                 Divider()
-                val on = s.styleId == NATIVE_STYLE
-                ChipButton(if (on) "🌍 English" else "🌍 Translate", highlighted = on, onClick = onToggleTranslate)
+                val on = st.takeStyle.translating
+                ChipButton(if (on) "🌍 Translate on" else "🌍 Translate off", highlighted = on,
+                    description = "Translate this recording to English: ${if (on) "on" else "off"}", onClick = onToggleTranslate)
                 Divider()
                 ChipButton("✕", onClick = onCancel, description = "Cancel")
             }

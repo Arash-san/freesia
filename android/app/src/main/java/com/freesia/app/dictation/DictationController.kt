@@ -13,6 +13,9 @@ import com.freesia.app.data.RecordingStore
 import com.freesia.app.data.SavedRecording
 import com.freesia.app.data.SettingsStore
 import com.freesia.app.data.TokenStore
+import com.freesia.app.data.TakeStyle
+import com.freesia.app.data.takeStyle
+import com.freesia.app.diag.DiagEntry
 import com.freesia.app.diag.ErrorReporter
 import com.freesia.app.service.RecordingService
 import android.content.ClipData
@@ -51,6 +54,7 @@ data class DictState(
     val savedRecordingId: String? = null,
     /** Until when (epoch ms) the last insertion can be undone from the bubble. */
     val undoUntil: Long = 0,
+    val takeStyle: TakeStyle = TakeStyle(),
 )
 
 /** Where the finished text goes: a field in another app, or a box inside Freesia. */
@@ -89,7 +93,7 @@ class DictationController(
     private val engineReady: () -> Boolean = { tokens.signedIn.value },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val pipeline = TranscriptPipeline(api, gemini = gemini)
+    private val pipeline = TranscriptPipeline(api, gemini = gemini, onTiming = ::recordTiming)
     private val _state = MutableStateFlow(DictState())
     val state: StateFlow<DictState> = _state.asStateFlow()
     private val _level = MutableStateFlow(0f)
@@ -132,8 +136,18 @@ class DictationController(
         target = t
         undoTarget = null
         RecordingService.start(context)
-        _state.value = DictState(Phase.RECORDING, t.origin, _state.value.session + 1, startedAt = System.currentTimeMillis())
+        _state.value = DictState(Phase.RECORDING, t.origin, _state.value.session + 1,
+            startedAt = System.currentTimeMillis(), takeStyle = s.takeStyle())
         return true
+    }
+
+    fun toggleTranslate() {
+        _state.update { if (it.phase == Phase.RECORDING) it.copy(takeStyle = it.takeStyle.toggled()) else it }
+    }
+
+    /** Local numbers only: never audio, transcript, account or API key. Not queued for reporting. */
+    private fun recordTiming(stage: String, ms: Long) {
+        runCatching { reporter.log.add(DiagEntry(System.currentTimeMillis(), "INFO", "android:timing", "$stage=${ms}ms")) }
     }
 
     fun stop() {
@@ -141,11 +155,15 @@ class DictationController(
         val cap = capture ?: return
         capture = null
         _level.value = 0f
-        _state.value = _state.value.copy(phase = Phase.PROCESSING, message = null)
+        val takeStyle = _state.value.takeStyle
+        _state.value = _state.value.copy(phase = Phase.PROCESSING,
+            message = if (takeStyle.translating) "Translating to English…" else "Transcribing…")
         job = scope.launch {
+            val started = System.nanoTime()
             val result = withContext(Dispatchers.IO) { cap.stop() }
+            recordTiming("capture stop", (System.nanoTime() - started) / 1_000_000)
             RecordingService.stop(context)
-            process(result)
+            process(result, takeStyle)
         }
     }
 
@@ -159,7 +177,7 @@ class DictationController(
         _state.value = _state.value.copy(phase = Phase.IDLE, message = null)
     }
 
-    private suspend fun process(r: CaptureResult) {
+    private suspend fun process(r: CaptureResult, takeStyle: TakeStyle) {
         val t = target ?: return
         val session = _state.value.session
         var saved: SavedRecording? = null
@@ -177,7 +195,7 @@ class DictationController(
                 return
             }
             if (r.interrupted) reporter.warn("capture", "The microphone stopped mid-take; the audio up to that point is used")
-            val s = settings.value
+            val s = settings.value.copy(styleId = takeStyle.styleId)
             val style = Styles.byId(s.styleId)
             val durationSec = r.durationMs / 1000.0
             // 1. Register the take (already on disk) so nothing is lost from here on
@@ -190,7 +208,9 @@ class DictationController(
                 }
             }
             // 2. Compress to AAC in ADTS (streamable); the WAV is the fallback
+            val encodeStarted = System.nanoTime()
             val (audio, mime) = withContext(Dispatchers.IO) { compress(saved, r.wav) }
+            recordTiming("encode", (System.nanoTime() - encodeStarted) / 1_000_000)
             // 3. Transcribe (with automatic retries), correct, format, correct
             val result = withContext(Dispatchers.IO) {
                 pipeline.run(audio, mime, durationSec, s, RetryPolicy()) { attempt, delayMs, e ->
@@ -252,6 +272,7 @@ class DictationController(
         recordingId: String?, keep: Boolean, session: Long, how: String? = null,
     ) {
         val text = result.text
+        val deliveryStarted = System.nanoTime()
         val delivery = try {
             t.deliver(text)
         } catch (e: CancellationException) {
@@ -261,6 +282,7 @@ class DictationController(
             copyToClipboard(text)
             Delivery.COPIED
         }
+        recordTiming("delivery", (System.nanoTime() - deliveryStarted) / 1_000_000)
         history.add(text, result.raw, styleId, t.appPackage, durationSec, how ?: delivery.label)
         settings.addWords(Words.count(text))
         // Delivered: the audio is no longer needed (unless the user keeps recordings)

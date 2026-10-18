@@ -58,6 +58,14 @@ class SettingsStore(context: Context) {
     private val _stats = MutableStateFlow(loadStats())
     val stats: StateFlow<Stats> = _stats.asStateFlow()
 
+    init {
+        if (prefs.getInt("translationModeVersion", 0) < 1) prefs.edit {
+            putString("styleId", _flow.value.styleId)
+            putString("plainStyleId", _flow.value.plainStyleId)
+            putInt("translationModeVersion", 1)
+        }
+    }
+
     @Synchronized
     fun update(block: (AppSettings) -> AppSettings) {
         val next = block(_flow.value)
@@ -134,7 +142,7 @@ class SettingsStore(context: Context) {
             onboarded = prefs.getBoolean("onboarded", false),
             bubbleSide = prefs.getInt("bubbleSide", d.bubbleSide),
             bubbleY = prefs.getFloat("bubbleY", d.bubbleY),
-        )
+        ).resetLegacyTranslation(prefs.getInt("translationModeVersion", 0))
     }
 
     private fun save(s: AppSettings) = prefs.edit {
@@ -167,8 +175,7 @@ class SettingsStore(context: Context) {
 }
 
 /**
- * The bubble's "Translate" switch: Native Language on, or back to the style used
- * before it (so Persian can be written as Persian or turned into English per take).
+ * The explicit "Translate by default" preference. Microphone toggles use TakeStyle instead.
  */
 fun AppSettings.toggledTranslate(): AppSettings =
     if (styleId == NATIVE_STYLE) copy(styleId = plainStyleId.takeIf { it != NATIVE_STYLE } ?: "normal")

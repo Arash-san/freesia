@@ -3,6 +3,14 @@
 Each `## <version>` section becomes the notes of the GitHub release `android-v<version>`
 (see `.github/workflows/android.yml` at the repository root).
 
+## 3.2.1
+
+**Translation stays intentional.** The microphone's Translate button now affects only the current recording. It no longer changes your saved style or the next recording, and its label clearly says on or off. Home also has translation and cancel controls while recording. Settings → Dictation has an explicit Translate by default switch if you want every recording translated to English.
+
+On the first launch after this update, an old saved translation style returns to your previous ordinary style (or Normal if none was saved). To keep translation as your default, turn on Translate by default again, or choose Native Language in Styles.
+
+Diagnostics now keeps local timing numbers for stopping capture, encoding, recognition or translation, formatting and text delivery. These entries contain no audio, transcript, account details or API keys and are not sent as error reports. They help identify which stage is slow on your phone.
+
 ## 3.2.0
 
 **Gemini on your phone.** Choose Freesia Cloud or Google Gemini during setup or in Settings → Speech engine → Configure. Gemini uses your Google AI Studio API key for transcription and style formatting. The key is encrypted on this phone with Android Keystore. Automatic mode discovers available Flash models; you can also choose a model yourself. Google API pricing and quota apply.

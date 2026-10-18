@@ -22,8 +22,8 @@ android {
         applicationId = "com.freesia.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 30200
-        versionName = "3.2.0"
+        versionCode = 30201
+        versionName = "3.2.1"
     }
 
     signingConfigs {
