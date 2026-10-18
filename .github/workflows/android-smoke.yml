@@ -1,0 +1,57 @@
+name: Android upgrade smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Candidate Android release tag (drafts supported)
+        required: true
+        default: android-v3.2.1
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install emulator and Android 16 image
+        run: |
+          sdkmanager --install 'emulator' 'system-images;android-36;google_apis;x86_64' > /dev/null
+          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
+      - name: Download signed baseline and candidate APKs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ inputs.candidate }}
+        run: |
+          [[ "$CANDIDATE" =~ ^android-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          mkdir -p android/dist
+          gh release download android-v3.2.0 -p Freesia-Android-3.2.0.apk -D android/dist
+          version="${CANDIDATE#android-v}"
+          gh release download "$CANDIDATE" -p "Freesia-Android-$version.apk" -D android/dist
+          if [[ "$version" != 3.2.1 ]]; then cp "android/dist/Freesia-Android-$version.apk" android/dist/Freesia-Android-3.2.1.apk; fi
+      - name: Boot a disposable emulator with KVM
+        run: |
+          sudo chmod 666 /dev/kvm
+          echo no | avdmanager create avd -n smoke -k 'system-images;android-36;google_apis;x86_64' -d pixel_7
+          sudo ln -s "$GITHUB_WORKSPACE/android" /work
+          emulator -avd smoke -no-window -no-boot-anim -no-snapshot -gpu swangle_indirect -accel on -noaudio -no-metrics > android/dist/emulator.log 2>&1 &
+      - name: Check upgrade and recording translation state
+        run: python3 android/docker/translation_ui_smoke.py
+      - name: Retain UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-upgrade-smoke
+          path: |
+            android/dist/translation-ui/
+            android/dist/emulator.log
