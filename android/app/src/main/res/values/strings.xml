@@ -8,5 +8,7 @@
     <string name="notif_listening">Freesia is listening</string>
     <string name="notif_listening_body">Tap the bubble again, or Stop, when you are done.</string>
     <string name="notif_stop">Stop</string>
+    <string name="notif_transcribing">Freesia is preparing your text</string>
+    <string name="notif_transcribing_body">Your recording is safe while dictation finishes.</string>
     <string name="notif_channel_recovered">Recovered dictations</string>
 </resources>

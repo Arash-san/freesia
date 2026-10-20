@@ -18,6 +18,7 @@ import com.freesia.app.data.takeStyle
 import com.freesia.app.diag.DiagEntry
 import com.freesia.app.diag.ErrorReporter
 import com.freesia.app.service.RecordingService
+import com.freesia.app.service.TranscriptionService
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -36,6 +37,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.Closeable
 
 /** SAVED: the take could not be transcribed yet, but its audio is safe in Saved recordings. */
 enum class Phase { IDLE, RECORDING, PROCESSING, DONE, SAVED, ERROR }
@@ -106,6 +108,7 @@ class DictationController(
     private var capture: AudioCapture? = null
     private var target: DictationTarget? = null
     private var job: Job? = null
+    private var foregroundWork: Closeable? = null
     /** Where the last insertion went, while it can still be undone. */
     private var undoTarget: DictationTarget? = null
 
@@ -114,6 +117,8 @@ class DictationController(
     fun start(t: DictationTarget): Boolean {
         if (isBusy) return false
         job?.cancel()
+        foregroundWork?.close()
+        foregroundWork = null
         if (!engineReady()) {
             fail(t.origin, "Set up your selected speech engine in Settings first.", newSession = true)
             return false
@@ -150,20 +155,37 @@ class DictationController(
         runCatching { reporter.log.add(DiagEntry(System.currentTimeMillis(), "INFO", "android:timing", "$stage=${ms}ms")) }
     }
 
+    private fun beginForegroundWork(): Closeable = TranscriptionService.begin(context).also {
+        foregroundWork?.close()
+        foregroundWork = it
+    }
+
+    private fun finishForegroundWork(work: Closeable) {
+        if (foregroundWork === work) foregroundWork = null
+        work.close()
+    }
+
     fun stop() {
         if (_state.value.phase != Phase.RECORDING) return
         val cap = capture ?: return
         capture = null
         _level.value = 0f
         val takeStyle = _state.value.takeStyle
+        val session = _state.value.session
         _state.value = _state.value.copy(phase = Phase.PROCESSING,
             message = if (takeStyle.translating) "Translating to English…" else "Transcribing…")
         job = scope.launch {
-            val started = System.nanoTime()
-            val result = withContext(Dispatchers.IO) { cap.stop() }
-            recordTiming("capture stop", (System.nanoTime() - started) / 1_000_000)
-            RecordingService.stop(context)
-            process(result, takeStyle)
+            val work = beginForegroundWork()
+            try {
+                val started = System.nanoTime()
+                val result = withContext(Dispatchers.IO) { cap.stop() }
+                recordTiming("capture stop", (System.nanoTime() - started) / 1_000_000)
+                RecordingService.stop(context)
+                process(result, takeStyle)
+            } finally {
+                if (_state.value.session == session) RecordingService.stop(context)
+                finishForegroundWork(work)
+            }
         }
     }
 
@@ -172,6 +194,8 @@ class DictationController(
         capture?.let { c -> scope.launch(Dispatchers.IO) { c.stop().wav.delete() } }
         capture = null
         job?.cancel()
+        foregroundWork?.close()
+        foregroundWork = null
         RecordingService.stop(context)
         _level.value = 0f
         _state.value = _state.value.copy(phase = Phase.IDLE, message = null)
@@ -329,6 +353,7 @@ class DictationController(
         _state.value = DictState(Phase.PROCESSING, t.origin, _state.value.session + 1)
         val session = _state.value.session
         job = scope.launch {
+            val work = beginForegroundWork()
             _retrying.update { it + id }
             val s = settings.value
             try {
@@ -362,6 +387,7 @@ class DictationController(
                 showSaved(t.origin, savedMessage(api, auto, t.origin), id)
             } finally {
                 _retrying.update { it - id }
+                finishForegroundWork(work)
             }
         }
     }
@@ -422,6 +448,7 @@ class DictationController(
         _retrying.update { cur -> claimed = id !in cur; if (claimed) cur + id else cur }
         if (!claimed) return Outcome.SKIPPED
         val s = settings.value
+        val work = if (background) null else TranscriptionService.begin(context)
         try {
             withContext(Dispatchers.IO) { recordings.markPending(id) }
             val policy = if (background) RetryPolicy.NONE else RetryPolicy(listOf(2_000L))
@@ -454,6 +481,7 @@ class DictationController(
             return if (auto) Outcome.FAILED_TEMPORARY else Outcome.FAILED
         } finally {
             _retrying.update { it - id }
+            work?.close()
         }
     }
 
