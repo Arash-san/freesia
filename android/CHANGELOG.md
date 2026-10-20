@@ -3,6 +3,12 @@
 Each `## <version>` section becomes the notes of the GitHub release `android-v<version>`
 (see `.github/workflows/android.yml` at the repository root).
 
+## 3.2.3
+
+Android prepares compressed audio while you record, so finishing a longer take no longer requires a full encoding pass after Stop. A separate worker follows the saved WAV; microphone reads stay on their own thread. The complete WAV remains available until compression succeeds. A failed or slow codec falls back to that WAV, and the final encoder wait is limited to one second.
+
+This update includes the background processing protection introduced in 3.2.2. Audio format and bitrate remain AAC LC, 16 kHz mono, 32 kbps.
+
 ## 3.2.2
 
 Dictation now stays active until recognition, formatting and delivery finish, even after you switch to another app or turn the screen off. The previous version ended its foreground service when recording stopped. Android could then freeze the unfinished work and delay its network timeouts. A separate processing notification and a bounded CPU wake lock now cover that work, including retries you start from History or the bubble.

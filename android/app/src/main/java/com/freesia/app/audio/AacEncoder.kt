@@ -23,7 +23,7 @@ import java.io.RandomAccessFile
 object AacEncoder {
     const val MIME = "audio/aac"
 
-    fun encode(wav: File, out: File) {
+    fun encode(wav: File, out: File, inputFinished: () -> Boolean = { true }) {
         val sampleRate = Wav.sampleRate(wav)
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 1).apply {
             setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
@@ -35,7 +35,7 @@ object AacEncoder {
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             codec.start()
             val info = MediaCodec.BufferInfo()
-            val startedNs = System.nanoTime()
+            var lastProgressNs = System.nanoTime()
             var readBytes = 0L
             var inputDone = false
             var outputDone = false
@@ -45,13 +45,18 @@ object AacEncoder {
                 input.seek(Wav.HEADER_BYTES.toLong())
                 BufferedOutputStream(FileOutputStream(out), 32 * 1024).use { os ->
                     while (!outputDone) {
-                        if (!inputDone) {
-                            val inIdx = codec.dequeueInputBuffer(10_000)
+                        if (Thread.currentThread().isInterrupted) throw InterruptedException("encoding cancelled")
+                        var queuedInput = false
+                        // A live take is still growing. Only send EOS after its writer has closed.
+                        val finished = inputFinished()
+                        val available = (input.length() - input.filePointer).coerceAtLeast(0)
+                        if (!inputDone && (available > 0 || finished)) {
+                            val inIdx = codec.dequeueInputBuffer(0)
                             if (inIdx >= 0) {
                                 val inBuf = codec.getInputBuffer(inIdx)!!
                                 inBuf.clear()
                                 val want = minOf(buf.size, inBuf.remaining()) and 1.inv()
-                                val n = input.read(buf, 0, want)
+                                val n = if (available == 0L) -1 else input.read(buf, 0, minOf(want.toLong(), available).toInt())
                                 val ptsUs = readBytes / 2 * 1_000_000L / sampleRate
                                 if (n <= 0) {
                                     codec.queueInputBuffer(inIdx, 0, 0, ptsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
@@ -61,9 +66,13 @@ object AacEncoder {
                                     readBytes += n
                                     codec.queueInputBuffer(inIdx, 0, n, ptsUs, 0)
                                 }
+                                queuedInput = true
+                                lastProgressNs = System.nanoTime()
                             }
                         }
-                        var outIdx = codec.dequeueOutputBuffer(info, 10_000)
+                        // Keep feeding while input is available. Block only when the codec needs
+                        // to make progress, rather than pausing once for every input chunk.
+                        var outIdx = codec.dequeueOutputBuffer(info, if (queuedInput && !inputDone) 0 else 10_000)
                         while (outIdx != MediaCodec.INFO_TRY_AGAIN_LATER) {
                             if (outIdx >= 0) {
                                 val outBuf = codec.getOutputBuffer(outIdx)!!
@@ -76,12 +85,13 @@ object AacEncoder {
                                     os.write(frame, 0, info.size)
                                 }
                                 codec.releaseOutputBuffer(outIdx, false)
+                                lastProgressNs = System.nanoTime()
                                 if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) { outputDone = true; break }
                             }
                             outIdx = codec.dequeueOutputBuffer(info, 0)
                         }
                         // Never hang on a misbehaving vendor codec: the WAV is uploaded instead.
-                        if (System.nanoTime() - startedNs > 120_000_000_000L) throw IllegalStateException("encoder stalled")
+                        if (System.nanoTime() - lastProgressNs > 120_000_000_000L) throw IllegalStateException("encoder stalled")
                     }
                 }
             }
