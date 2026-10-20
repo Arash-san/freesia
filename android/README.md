@@ -6,13 +6,15 @@ edge of the screen. You tap the bubble and speak. You tap it again (or pause) to
 Freesia sends the recording to your selected engine, formats the transcript in the
 style you picked, and types the result into that field at the cursor.
 
-Version 3.2.1 · package `com.freesia.app` · minSdk 26 (Android 8.0) · targetSdk and compileSdk 37 (Android 17).
+Version 3.2.2 · package `com.freesia.app` · minSdk 26 (Android 8.0) · targetSdk and compileSdk 37 (Android 17).
 
 ## Choose a speech engine
 
 The microphone's Translate control applies to one recording. It starts from your saved style on every take and never changes that style. For translation on every recording, use Settings → Dictation → Translate by default or choose Native Language in Styles. The first launch of 3.2.1 clears the old saved translation default once and restores the previous ordinary style. Explicit choices made after that are preserved.
 
 Settings → Diagnostics includes local timing numbers for capture stop, encoding, recognition or translation, formatting and delivery. They are never sent as error reports and contain no recording content or credentials.
+
+From 3.2.2, a separate processing service keeps dictation active until text delivery finishes. Its notification remains after recording stops, so Android can distinguish unfinished dictation from an idle app. A bounded CPU wake lock also covers processing while the screen is off. Overlapping requests share that protection; automatic recovery uses WorkManager instead.
 
 Choose Freesia Cloud or Gemini during onboarding, or open Settings → Speech engine → Configure later. Cloud uses your server address and account. Gemini works without a Cloud account and uses your Google AI Studio API key for both speech recognition and style formatting. Save and test validates the key before replacing an existing key. Automatic mode discovers available stable Flash models; the model menu lets you select another supported Gemini model.
 

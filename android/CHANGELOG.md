@@ -3,6 +3,12 @@
 Each `## <version>` section becomes the notes of the GitHub release `android-v<version>`
 (see `.github/workflows/android.yml` at the repository root).
 
+## 3.2.2
+
+Dictation now stays active until recognition, formatting and delivery finish, even after you switch to another app or turn the screen off. The previous version ended its foreground service when recording stopped. Android could then freeze the unfinished work and delay its network timeouts. A separate processing notification and a bounded CPU wake lock now cover that work, including retries you start from History or the bubble.
+
+The microphone stops when you finish recording. Processing protection ends when the last active request finishes or is cancelled. Automatic recovery continues through Android's background job scheduler.
+
 ## 3.2.1
 
 **Translation stays intentional.** The microphone's Translate button now affects only the current recording. It no longer changes your saved style or the next recording, and its label clearly says on or off. Home also has translation and cancel controls while recording. Settings → Dictation has an explicit Translate by default switch if you want every recording translated to English.
