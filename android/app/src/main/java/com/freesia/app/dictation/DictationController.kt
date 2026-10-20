@@ -191,7 +191,11 @@ class DictationController(
 
     /** Abort without delivering anything. */
     fun cancel() {
-        capture?.let { c -> scope.launch(Dispatchers.IO) { c.stop().wav.delete() } }
+        capture?.let { c -> scope.launch(Dispatchers.IO) {
+            val result = c.stop()
+            result.aac?.delete()
+            result.wav.delete()
+        } }
         capture = null
         job?.cancel()
         foregroundWork?.close()
@@ -231,9 +235,9 @@ class DictationController(
                     null
                 }
             }
-            // 2. Compress to AAC in ADTS (streamable); the WAV is the fallback
+            // 2. Adopt the AAC prepared during capture; the WAV is the fallback
             val encodeStarted = System.nanoTime()
-            val (audio, mime) = withContext(Dispatchers.IO) { compress(saved, r.wav) }
+            val (audio, mime) = withContext(Dispatchers.IO) { compress(saved, r.wav, r.aac) }
             recordTiming("encode", (System.nanoTime() - encodeStarted) / 1_000_000)
             // 3. Transcribe (with automatic retries), correct, format, correct
             val result = withContext(Dispatchers.IO) {
@@ -283,7 +287,7 @@ class DictationController(
                 if (auto) RecoveryScheduler.schedule(context)
                 showSaved(t.origin, savedMessage(api, auto, t.origin), rec.id)
             }
-        }
+        } finally { r.aac?.delete() }
     }
 
     /**
@@ -397,12 +401,13 @@ class DictationController(
         if (_state.value.phase == Phase.SAVED) _state.value = _state.value.copy(phase = Phase.IDLE)
     }
 
-    /** Compresses a registered take to AAC-ADTS and swaps it in; on any codec problem the WAV is used. */
-    private fun compress(saved: SavedRecording?, wav: File): Pair<File, String> {
+    /** Adopts the prepared AAC; the complete WAV is used if compression was unavailable. */
+    private fun compress(saved: SavedRecording?, wav: File, prepared: File?): Pair<File, String> {
         if (saved == null) return wav to "audio/wav"
-        val tmp = File(recordings.file(saved).parentFile, "${saved.id}.aac.tmp")
+        // Encoding already ran beside capture. A failed/slow codec uses the durable WAV
+        // immediately rather than repeating the entire encoding pass after Stop.
+        val tmp = prepared ?: return recordings.file(saved) to "audio/wav"
         return try {
-            AacEncoder.encode(recordings.file(saved), tmp)
             recordings.replaceAudio(saved.id, tmp, AacEncoder.MIME)
             val now = recordings.get(saved.id) ?: saved
             recordings.file(now) to now.mime

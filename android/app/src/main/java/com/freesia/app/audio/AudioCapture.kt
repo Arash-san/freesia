@@ -26,6 +26,7 @@ data class CaptureResult(
     val allZero: Boolean,
     val speechHeard: Boolean,
     val interrupted: Boolean = false,
+    val aac: File? = null,
 )
 
 /**
@@ -33,6 +34,7 @@ data class CaptureResult(
  * file in app storage from the first chunk, so a take survives the app being
  * killed mid-recording (the header is fixed on stop, or at the next start).
  * The level (0..1) and auto-stop signal are reported per 20 ms chunk.
+ * An independent worker compresses flushed PCM while capture continues.
  */
 class AudioCapture(
     private val context: Context,
@@ -47,6 +49,8 @@ class AudioCapture(
     @Volatile private var interrupted = false
     private var thread: Thread? = null
     private var record: AudioRecord? = null
+    @Volatile private var captureFinished = false
+    @Volatile private var liveEncoder: LiveAacEncoder? = null
 
     class MicUnavailable(message: String) : Exception(message)
 
@@ -88,37 +92,47 @@ class AudioCapture(
         val bytes = ByteArray(chunk.size * 2)
         var stopSignalled = false
         var sinceSync = 0
+        var sinceFlush = 0
         val fos = FileOutputStream(out)
-        BufferedOutputStream(fos, 16 * 1024).use { os ->
-            os.write(Wav.streamingHeader(sampleRate))
-            while (running) {
-                val n = r.read(chunk, 0, chunk.size)
-                if (n < 0) {
-                    // The microphone went away (another app took it, or Android revoked it):
-                    // end the take here and keep what was recorded.
-                    interrupted = true
-                    if (!stopSignalled) { stopSignalled = true; onAutoStop() }
-                    break
-                }
-                if (n == 0) continue
-                for (i in 0 until n) {
-                    val s = chunk[i].toInt()
-                    bytes[i * 2] = (s and 0xff).toByte()
-                    bytes[i * 2 + 1] = ((s shr 8) and 0xff).toByte()
-                }
-                os.write(bytes, 0, n * 2)
-                val stop = meter.feed(chunk, n)
-                onLevel(meter.level)
-                if (stop && !stopSignalled) { stopSignalled = true; onAutoStop() }
-                if (meter.elapsedMs >= MAX_MS && !stopSignalled) { stopSignalled = true; onAutoStop() }
-                // Push to disk about once a second so a killed process loses at most ~1 s
-                if (++sinceSync >= 50) {
-                    sinceSync = 0
-                    os.flush()
-                    try { fos.fd.sync() } catch (e: Exception) { /* best effort */ }
+        try {
+            BufferedOutputStream(fos, 16 * 1024).use { os ->
+                os.write(Wav.streamingHeader(sampleRate))
+                os.flush()
+                liveEncoder = runCatching {
+                    LiveAacEncoder(out, File(out.parentFile, out.nameWithoutExtension + ".aac.tmp"), { captureFinished })
+                        .also { it.start() }
+                }.getOrNull()
+                while (running) {
+                    val n = r.read(chunk, 0, chunk.size)
+                    if (n < 0) {
+                        // The microphone went away (another app took it, or Android revoked it):
+                        // end the take here and keep what was recorded.
+                        interrupted = true
+                        if (!stopSignalled) { stopSignalled = true; onAutoStop() }
+                        break
+                    }
+                    if (n == 0) continue
+                    for (i in 0 until n) {
+                        val s = chunk[i].toInt()
+                        bytes[i * 2] = (s and 0xff).toByte()
+                        bytes[i * 2 + 1] = ((s shr 8) and 0xff).toByte()
+                    }
+                    os.write(bytes, 0, n * 2)
+                    val stop = meter.feed(chunk, n)
+                    onLevel(meter.level)
+                    if (stop && !stopSignalled) { stopSignalled = true; onAutoStop() }
+                    if (meter.elapsedMs >= MAX_MS && !stopSignalled) { stopSignalled = true; onAutoStop() }
+                    // Let the independent encoder follow the WAV without delaying microphone reads.
+                    if (++sinceFlush >= 10) { sinceFlush = 0; os.flush() }
+                    // Push to disk about once a second so a killed process loses at most ~1 s
+                    if (++sinceSync >= 50) {
+                        sinceSync = 0
+                        os.flush()
+                        try { fos.fd.sync() } catch (e: Exception) { /* best effort */ }
+                    }
                 }
             }
-        }
+        } finally { captureFinished = true }
     }
 
     /** Stops capture and returns what was recorded. Safe to call from any thread. */
@@ -129,7 +143,8 @@ class AudioCapture(
         record?.release()
         record = null
         try { Wav.finalize(out) } catch (e: Exception) { /* recovered at next start */ }
-        return CaptureResult(out, sampleRate, meter.elapsedMs, meter.allZero, meter.speechHeard, interrupted)
+        val aac = liveEncoder?.finish()
+        return CaptureResult(out, sampleRate, meter.elapsedMs, meter.allZero, meter.speechHeard, interrupted, aac)
     }
 
     companion object { const val MAX_MS = 10 * 60 * 1000L }
