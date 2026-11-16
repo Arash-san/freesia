@@ -1,6 +1,6 @@
 [package]
 name = "freesia-desktop"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 description = "Freesia native desktop runtime"
 edition = "2021"
 license = "MIT"

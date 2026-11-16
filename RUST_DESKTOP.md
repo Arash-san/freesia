@@ -17,6 +17,8 @@ The default start, development and build commands now use Rust. Previous command
 
 The installer is in `src-tauri/target/release/bundle/nsis/`. `npm run dev:rust` runs the development build. `test/rust-desktop.cjs` verifies the real WebView2 interface against a localhost test server and fake microphone input. Its public domain audio fixtures live in the local `.tmp/localasr/audio` test assets. `test/rust-native-parity.cjs` tests the installed local model and, when an interactive foreground window is available, scan code paste and selection capture. Tests use separate profiles and never upload audio to a real account.
 
+`node test/rust-shortcuts.cjs` also exercises native maximize, restore, close to tray, and the production Windows shortcut callback. It posts messages only to its own process. Recording uses a fake microphone and a localhost backend, and desktop paste is stubbed. Set `FREESIA_RUST_EXE` to test a release binary. Quit other Rust instances first.
+
 ## Migration and rollback
 
 Quit the existing Freesia from its tray icon before opening the Rust version. Both use `%APPDATA%\freesia` for settings, history, recordings, styles and downloaded models. The Rust version refuses to start against that profile while the Electron app is running. The first migration creates `config.before-rust.json`. Existing encrypted credentials keep Electron's AES-GCM envelope and Windows DPAPI key, so both versions can read them. WebView2 browser files live in a separate `webview2` subdirectory. Electron's original `Local State` credential key stays available.
@@ -46,6 +48,8 @@ An isolated profile can be used for evaluation:
 | Updates | Confirmed installation, progress and release notes. Downloaded installers remain available after an offline check. |
 
 When hidden, animations stop, WebView2's controller is explicitly hidden, and an idle main view can suspend. Recording, processing and microphone readiness prevent suspension. The overlay is created on demand and destroyed after its exit animation.
+
+For Windows graphics driver stalls, set `softwareRendering` to `true` in the native settings file while Freesia is closed. This persists the WebView2 `--disable-gpu` fallback for both windows. The default is `false`. Local inference uses `localUseGpu` independently. Software rendering can change CPU use, so its resource cost should be measured on the affected machine.
 
 ## Update releases
 

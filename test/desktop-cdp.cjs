@@ -6,6 +6,7 @@ class CDP {
     this.id = 0;
     this.pending = new Map();
     this.errors = [];
+    this.timeoutMs = 30000;
     ws.addEventListener("message", (ev) => {
       const m = JSON.parse(ev.data);
       if (m.id) {
@@ -31,7 +32,7 @@ class CDP {
       timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`CDP ${method} timed out`));
-      }, 30000);
+      }, this.timeoutMs);
       this.pending.set(id, { resolve, reject });
     });
     this.ws.send(JSON.stringify({ id, method, params }));

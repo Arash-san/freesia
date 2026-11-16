@@ -92,8 +92,13 @@ pub fn hide_main(app: &AppHandle) {
         memory(&win, true, false);
     }
 }
-pub fn browser_options() -> String {
+pub fn browser_options(s: &Shared) -> String {
     let mut args="--autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding".to_owned();
+    if s.boolean("softwareRendering") {
+        // A browser-only fallback for Windows graphics driver hangs. Local
+        // speech inference has its own, independent GPU setting.
+        args.push_str(" --disable-gpu");
+    }
     if let Ok(port) = std::env::var("FREESIA_DEBUG_PORT") {
         if port.parse::<u16>().is_ok() {
             args.push_str(&format!(
@@ -139,7 +144,7 @@ pub fn main_window(s: &Shared, app: &AppHandle, background: bool) -> tauri::Resu
             tauri::window::Color(239, 238, 234, 255)
         })
         .data_directory(s.root.join("webview2"))
-        .additional_browser_args(&browser_options());
+        .additional_browser_args(&browser_options(s));
     let win = secure_builder(builder).build()?;
     if let Some(icon) = app.default_window_icon() {
         let _ = win.set_icon(icon.clone());
@@ -234,7 +239,7 @@ fn ensure_overlay(s: &Shared, app: &AppHandle) -> Option<WebviewWindow> {
             .shadow(false)
             .visible(false)
             .data_directory(s.root.join("webview2"))
-            .additional_browser_args(&browser_options()),
+            .additional_browser_args(&browser_options(s)),
     )
     .build()
     .ok()?;

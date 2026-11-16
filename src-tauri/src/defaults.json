@@ -13,6 +13,7 @@
   "microphoneId": "",
   "language": "auto",
   "theme": "system",
+  "softwareRendering": false,
   "autoLaunch": false,
   "showOverlay": true,
   "sounds": true,

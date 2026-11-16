@@ -3,7 +3,7 @@ const fs = require("node:fs"),
   http = require("node:http"),
   assert = require("node:assert/strict"),
   vm = require("node:vm");
-const { spawn } = require("node:child_process");
+const { spawn, execFileSync } = require("node:child_process");
 const { connect, ready, sleep, screenshot } = require("./desktop-cdp.cjs");
 const root = path.resolve(__dirname, ".."),
   artifacts = path.join(root, ".tmp", "rust-desktop");
@@ -20,10 +20,42 @@ const check = (name, fn) =>
     });
 const api = (name, ...args) =>
   cdp.js(`window.freesia[${JSON.stringify(name)}](...${JSON.stringify(args)})`);
-const native = (action) =>
-  cdp.js(
-    `window.__TAURI__.core.invoke('ipc',{channel:'native:test',args:[${JSON.stringify(action)}]})`,
-  );
+// Native activation must not depend on a renderer IPC message: a suspended
+// WebView2 cannot deliver that message, and creating an overlay from its COM
+// callback does not exercise the production Windows shortcut path.
+async function native(action) {
+  if (action === "show") {
+    execFileSync(child.spawnfile, child.spawnargs.slice(1), {
+      cwd: path.dirname(child.spawnfile),
+      windowsHide: true,
+      stdio: "ignore",
+      timeout: 10000,
+    });
+  } else if (action === "quit") {
+    if (child.exitCode === null)
+      execFileSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+  } else {
+    const key = { dictate: "F24", command: "F23", cancel: "Escape" }[action];
+    assert(key, action);
+    const result = JSON.parse(
+      execFileSync(
+        "python",
+        [
+          path.join(__dirname, "windows-hotkey.py"),
+          "--pid",
+          String(child.pid),
+          "--key",
+          key,
+        ],
+        { windowsHide: true, encoding: "utf8" },
+      ),
+    );
+    assert.equal(result.posted, true);
+  }
+}
 let translating = true,
   contribution = false;
 const calls = [];
@@ -100,11 +132,14 @@ async function main() {
       onboarded: true,
       seenV3: true,
       theme: "dark",
+      softwareRendering: process.env.FREESIA_TEST_SOFTWARE_RENDERING === "1",
       engine: "cloud",
       sounds: false,
       errorReporting: false,
       keepMicReady: false,
       keepCancelledRecordings: true,
+      dictationShortcut: "Ctrl+Alt+Shift+F24",
+      commandShortcut: "Ctrl+Alt+Shift+F23",
     }),
   );
   fs.mkdirSync(path.join(profile, "styles"));
@@ -119,7 +154,7 @@ async function main() {
   const exe =
     process.env.FREESIA_RUST_EXE ||
     path.join(root, "src-tauri", "target", "debug", "freesia-desktop.exe");
-  child = spawn(exe, ["--profile", profile, "--no-shortcuts"], {
+  child = spawn(exe, ["--profile", profile], {
     env: {
       ...process.env,
       FREESIA_DEBUG_PORT: "9437",
@@ -132,7 +167,7 @@ async function main() {
       ),
     },
     windowsHide: true,
-      cwd: path.dirname(exe),
+    cwd: path.dirname(exe),
     stdio: "ignore",
   });
   cdp = await connect(9437);
@@ -241,7 +276,10 @@ async function main() {
     );
     await screenshot(cdp, path.join(artifacts, "home-light.png"));
     await api("setAppTheme", "dark");
-    assert.equal(await api("getAppVersion"), "4.0.0-beta.1");
+    const expectedVersion = JSON.parse(
+      fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8"),
+    ).version;
+    assert.equal(await api("getAppVersion"), expectedVersion);
     const status = await api("checkForUpdates");
     assert(["disabled", "current", "error"].includes(status.status));
   });

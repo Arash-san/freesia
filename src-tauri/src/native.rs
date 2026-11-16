@@ -341,10 +341,12 @@ pub fn selection() -> Result<String, String> {
     copy(&sentinel)?;
     let mut text = String::new();
     if chord(0x2e, true) {
-        for _ in 0..8 {
+        for _ in 0..20 {
             sleep(Duration::from_millis(40));
             let now = read();
-            if now != sentinel {
+            // Copy can empty the clipboard before its delayed Unicode text
+            // arrives. An empty read is not the completed selection.
+            if !now.is_empty() && now != sentinel {
                 text = now;
                 break;
             }

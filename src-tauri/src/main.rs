@@ -84,6 +84,13 @@ fn main() {
                     setup.string("engine")
                 ),
             );
+            if setup.boolean("softwareRendering") {
+                setup.log(
+                    "INFO",
+                    "webview",
+                    "Software rendering enabled for the interface",
+                );
+            }
             desktop::main_window(&setup, &handle, background)?;
             desktop::tray(&setup, &handle)?;
             desktop::register(&setup, &handle);

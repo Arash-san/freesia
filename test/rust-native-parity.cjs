@@ -33,6 +33,7 @@ fs.writeFileSync(
     errorReporting: false,
     keepMicReady: false,
     localUseGpu: true,
+    softwareRendering: process.env.FREESIA_TEST_SOFTWARE_RENDERING === "1",
     localUnloadMinutes: 1,
   }),
 );
@@ -67,7 +68,10 @@ async function main() {
   console.log("Animation callbacks/sec", report.frameRate);
   // Never send real keystrokes until the test window owns the foreground.
   const foreground = await api("getForegroundApp");
-  if (foreground === "freesia-desktop") {
+  if (
+    foreground === "freesia-desktop" &&
+    process.env.FREESIA_TEST_LOCAL_ONLY !== "1"
+  ) {
     await cdp.js(
       `window.testField=document.createElement('textarea');testField.style='position:fixed;z-index:999999;left:300px;top:100px;width:500px;height:150px';document.body.append(testField);testField.value='Existing selection';testField.focus();testField.select();`,
     );
@@ -83,7 +87,10 @@ async function main() {
     await cdp.js(
       `__TAURI__.core.invoke('ipc',{channel:'native:test',args:['command']})`,
     );
-    await sleep(600);
+    for (let i = 0; i < 40; i++) {
+      if (await cdp.js("capturedSelection !== null")) break;
+      await sleep(100);
+    }
     assert.equal(await cdp.js("capturedSelection"), "Capture this selection");
     await cdp.js(
       `__TAURI__.core.invoke('ipc',{channel:'native:test',args:['cancel']})`,
@@ -94,11 +101,15 @@ async function main() {
     );
   } else {
     report.keyboard =
-      "Blocked: Windows has no usable foreground window; no real keystrokes sent.";
+      process.env.FREESIA_TEST_LOCAL_ONLY === "1"
+        ? "Not attempted: local model check only."
+        : "Blocked: test window could not obtain foreground ownership; no real keystrokes sent.";
     console.log(report.keyboard);
   }
   const state = await api("engineStatus");
   assert.equal(state.local.configured, true);
+  // Local startup explicitly permits up to 120 seconds for a cold model load.
+  cdp.timeoutMs = 150000;
   const started = Date.now();
   const local = await api("localStart");
   assert.equal(local.running, true, JSON.stringify(local));
