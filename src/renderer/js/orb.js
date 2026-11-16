@@ -26,6 +26,12 @@
     let last = performance.now();
     let t0 = last;
     let destroyed = false;
+    let inView = true;
+    const observer = typeof root.IntersectionObserver === 'function' ? new root.IntersectionObserver(entries => {
+      inView = entries.some(entry => entry.isIntersecting);
+      if (inView) resume();
+    }) : null;
+    observer?.observe(canvas);
     const seeds = Array.from({ length: 5 }, (_, i) => ({
       phase: Math.random() * TAU,
       speed: 0.18 + i * 0.07,
@@ -67,7 +73,7 @@
 
     function resume() {
       if (destroyed || raf) return;
-      if (document.hidden) { document.addEventListener('visibilitychange', resume, { once: true }); return; }
+      if (document.hidden || root.__freesiaVisible === false || !inView) return;
       last = performance.now();
       raf = requestAnimationFrame(frame);
     }
@@ -76,9 +82,8 @@
       if (destroyed) return;
       // Hidden (tray, minimized, overlay not shown): stop the loop entirely.
       // Scheduling frames while hidden kept Freesia burning CPU in the tray.
-      if (document.hidden) {
+      if (document.hidden || root.__freesiaVisible === false || !inView) {
         raf = 0;
-        document.addEventListener('visibilitychange', resume, { once: true });
         return;
       }
       raf = requestAnimationFrame(frame);
@@ -169,6 +174,8 @@
 
     }
 
+    document.addEventListener('visibilitychange', resume);
+    root.addEventListener?.('freesia-visibility', resume);
     raf = requestAnimationFrame(frame);
 
     return {
@@ -183,7 +190,7 @@
       },
       setPalette(p) { if (Array.isArray(p) && p.length >= 4) palette = p; },
       get state() { return state; },
-      destroy() { destroyed = true; cancelAnimationFrame(raf); }
+      destroy() { destroyed = true; cancelAnimationFrame(raf); observer?.disconnect(); document.removeEventListener('visibilitychange', resume); root.removeEventListener?.('freesia-visibility', resume); }
     };
   }
 

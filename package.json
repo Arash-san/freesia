@@ -14,20 +14,29 @@
   },
   "homepage": "https://github.com/arash-san/freesia#readme",
   "scripts": {
-    "start": "electron .",
-    "dev": "electron . --dev",
+    "start": "node scripts/rust.cjs dev",
+    "dev": "node scripts/rust.cjs dev",
     "test": "node --test \"test/**/*.test.mjs\"",
     "test:native": "node test/run-native.cjs",
-    "build": "electron-builder",
-    "package": "electron-builder --win --x64",
-    "release": "electron-builder --win --x64 --publish always",
-    "shots": "node test/run-shots.cjs"
+    "build": "node scripts/rust.cjs build",
+    "package": "node scripts/rust.cjs build",
+    "release": "node scripts/release-rust.cjs",
+    "shots": "node test/run-shots.cjs",
+    "dev:rust": "node scripts/rust.cjs dev",
+    "build:rust": "node scripts/rust.cjs build",
+    "test:rust": "node test/rust-desktop.cjs",
+    "start:electron": "electron .",
+    "dev:electron": "electron . --dev",
+    "build:electron": "electron-builder",
+    "package:electron": "electron-builder --win --x64",
+    "release:electron": "electron-builder --win --x64 --publish always"
   },
   "dependencies": {
     "electron-store": "^8.2.0",
     "electron-updater": "^6.8.3"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8",
     "jsdom": "^29.1.1"

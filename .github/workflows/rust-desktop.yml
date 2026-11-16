@@ -1,0 +1,59 @@
+name: Rust desktop
+on:
+  workflow_dispatch:
+  push:
+    tags: ['rust-v*']
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - 'src/renderer/**'
+      - 'scripts/rust.cjs'
+      - 'scripts/sign-rust-update.cjs'
+      - '.github/workflows/rust-desktop.yml'
+jobs:
+  windows:
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npm test
+      - run: cargo test --manifest-path src-tauri/Cargo.toml -j 4
+      - name: Verify application version
+        shell: pwsh
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $cargoText = Get-Content src-tauri/Cargo.toml -Raw
+          $cargoVersion = [regex]::Match($cargoText, '(?m)^version\s*=\s*"([^"]+)"').Groups[1].Value
+          if ($cargoVersion -ne $version) { throw 'Cargo and Tauri application versions must match.' }
+          if ($env:GITHUB_REF_NAME.StartsWith('rust-v') -and ($env:GITHUB_REF_NAME -replace '^rust-v','') -ne $version) { throw 'The release tag must match the application version.' }
+      - run: npm run build:rust
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Freesia-Rust-Windows
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+      - name: Sign update manifest and publish Rust prerelease
+        if: startsWith(github.ref, 'refs/tags/rust-v')
+        shell: pwsh
+        env:
+          FREESIA_SIGNING_KEY_PEM: ${{ secrets.FREESIA_SIGNING_KEY_PEM }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if (-not $env:FREESIA_SIGNING_KEY_PEM) { throw 'Configure FREESIA_SIGNING_KEY_PEM before publishing Rust updates.' }
+          $signingFile = Join-Path $env:RUNNER_TEMP 'freesia-update-key.pem'
+          [IO.File]::WriteAllText($signingFile, $env:FREESIA_SIGNING_KEY_PEM)
+          $env:FREESIA_SIGNING_KEY = $signingFile
+          $version = $env:GITHUB_REF_NAME -replace '^rust-v',''
+          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          node scripts/sign-rust-update.cjs $installer.FullName $version
+          if ($LASTEXITCODE) { throw 'Update signing failed.' }
+          $manifest = Join-Path $installer.DirectoryName 'freesia-rust-update.json'
+          $notesFile = (Resolve-Path 'RELEASE_NOTES_RUST.md').Path
+          gh release create $env:GITHUB_REF_NAME $installer.FullName $manifest --prerelease --title "Freesia Rust $version" --notes-file $notesFile
+          if ($LASTEXITCODE) { throw 'Release publication failed.' }

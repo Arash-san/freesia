@@ -34,7 +34,7 @@ jobs:
         run: npm run test:native
 
       - name: Build and publish release
-        run: npm run release
+        run: npm run release:electron
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

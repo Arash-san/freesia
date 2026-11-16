@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https://cdn.simpleicons.org; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'; connect-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https://cdn.simpleicons.org; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost">
   <title>Freesia</title>
   <link rel="stylesheet" href="styles/tokens.css">
   <link rel="stylesheet" href="styles/app.css">
@@ -470,6 +470,7 @@
   <div class="toasts" id="toastContainer" aria-live="polite"></div>
   <div id="dialogHost"></div>
 
+  <script src="native-bridge.js"></script>
   <script src="styles-data.js"></script>
   <script src="audio-meter.js"></script>
   <script src="js/orb.js"></script>

@@ -1,0 +1,48 @@
+{
+  "runtime": {
+    "version": "b11182",
+    "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11182/llama-b11182-bin-win-vulkan-x64.zip",
+    "sha256": "aceb42215efc1c85acb3e10e5cb9d9d2bf9e49541b21873e54d66ddb9f97cd0a",
+    "size": 32460984
+  },
+  "models": {
+    "qwen3-asr-1.7b": {
+      "label": "Qwen3-ASR 1.7B",
+      "blurb": "Best accuracy. Wants a GPU with 4 GB or more; runs on CPU too.",
+      "vramGB": 3.6,
+      "files": [
+        {
+          "name": "Qwen3-ASR-1.7B-Q8_0.gguf",
+          "url": "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main/Qwen3-ASR-1.7B-Q8_0.gguf",
+          "sha256": "58e22d0532d4eacaf034cfac17a6fed159f37c41390c710186783be439d1fc57",
+          "size": 2165034944
+        },
+        {
+          "name": "mmproj-Qwen3-ASR-1.7B-Q8_0.gguf",
+          "url": "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf",
+          "sha256": "46c1d533af3f354ceb37ce855dbceff7da7fa7cf1e6a523df3b13440bd164c0d",
+          "size": 355709344
+        }
+      ]
+    },
+    "qwen3-asr-0.6b": {
+      "label": "Qwen3-ASR 0.6B",
+      "blurb": "Lighter and faster. Good for older laptops or CPU-only PCs.",
+      "vramGB": 1.6,
+      "files": [
+        {
+          "name": "Qwen3-ASR-0.6B-Q8_0.gguf",
+          "url": "https://huggingface.co/ggml-org/Qwen3-ASR-0.6B-GGUF/resolve/main/Qwen3-ASR-0.6B-Q8_0.gguf",
+          "sha256": "bca259818b50ca7c4c05e9bdb35a5dc04fa039653a6d6f3f0f331f96f6aa1971",
+          "size": 804749248
+        },
+        {
+          "name": "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf",
+          "url": "https://huggingface.co/ggml-org/Qwen3-ASR-0.6B-GGUF/resolve/main/mmproj-Qwen3-ASR-0.6B-Q8_0.gguf",
+          "sha256": "41a342b5e4c514e968cb756de6cd1b7be39eff43c44c57a2ef5fc6522e36603d",
+          "size": 214392480
+        }
+      ]
+    }
+  }
+}

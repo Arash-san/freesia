@@ -1,3 +1,5 @@
+> The Windows desktop on this branch uses Rust and WebView2. See [RUST_DESKTOP.md](RUST_DESKTOP.md) for builds, migration and verification. The previous Electron build commands remain available with the `:electron` suffix.
+
 <p align="center">
   <img src="assets/readme-header.png" alt="Freesia README header" width="100%">
 </p>
@@ -60,11 +62,11 @@ Optional error reports contain the app version, the operating system, the engine
 
 ## Requirements
 
-Windows 10 or newer. For the on device engine, any GPU with Vulkan support and 4 GB of memory is ideal, and a CPU works too. Node.js 22 is only needed for development.
+Windows 10 or newer and WebView2. The installer can install WebView2 if needed. For the on device engine, any GPU with Vulkan support and 4 GB of memory is ideal, and a CPU works too. Development requires Node.js, the Rust MSVC toolchain and Visual Studio C++ Build Tools. These build tools are not required to run the installed app.
 
 ## First run
 
-1. Install Freesia from the latest release.
+1. Install the supplied Rust beta, or build this branch with `npm run package`.
 2. Choose an engine. Sign in to Freesia Cloud with your server address, username and password, download the on device model, or paste a Gemini key.
 3. Pick your microphone and watch the level meter move.
 4. Press `Ctrl+Shift+Space` in any app, speak, and press it again.
@@ -80,6 +82,7 @@ Freesia Cloud connects to a Freesia Voice server: a small authenticated service 
 ```bash
 git clone https://github.com/arash-san/freesia.git
 cd freesia
+git switch rust-desktop-20261116
 npm install
 npm start
 ```
@@ -87,6 +90,8 @@ npm start
 | Script | Purpose |
 |---|---|
 | `npm test` | Unit tests for the renderer, engines, WAV splitting and updates |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | Rust service and migration tests |
+| `npm run test:rust` | WebView2 integration with isolated profiles and local audio fixtures |
 | `npm run test:native` | Electron smoke test with a fake microphone |
 | `npm run shots` | Screenshots of every view in dark and light themes into `.tmp/shots` |
 | `node test/run-e2e.cjs` | End to end run on real speech (needs local test assets) |
@@ -95,16 +100,19 @@ npm start
 ## Project layout
 
 ```text
-src/main/            Electron main process, engines, app scanner, key helper, updater
+src-tauri/           Rust desktop services, native integration and installer configuration
+src/main/            Previous Electron runtime, retained for rollback and comparison
 src/renderer/        Interface: index.html, app.js, js/ (orb, ui, audio, vocab), styles/, fonts/
-scripts/             Icon and installer art generators
+scripts/             Rust builds, signed updates, icon and installer art generators
 android/             Freesia for Android
 test/                Unit, native, screenshot and end to end tests
 ```
 
 ## Releases and updates
 
-Bump the version with `npm version`, then push the commit and tag with `git push origin main --follow-tags`. GitHub Actions builds the installer and publishes it with `latest.yml`, and installed copies of Freesia find it through `electron-updater`. Freesia checks at startup, every five minutes, after sleep and when you reopen it, and it only installs after you confirm.
+For Rust releases, keep the versions in `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` equal and use a `rust-v<version>` tag. The Rust workflow builds the Windows installer and a signed update manifest. Updates are checked at startup, every five minutes and when you open the window. Installation requires confirmation and waits for dictation to finish. See [RUST_DESKTOP.md](RUST_DESKTOP.md) for signing and migration details.
+
+The previous Electron release workflow remains available for `v<version>` tags through `npm run release:electron` and its existing `latest.yml` update channel.
 
 ## License
 

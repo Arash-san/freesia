@@ -26,3 +26,5 @@ android/app/build/
 android/local.properties
 *.jks
 keystore.properties
+src-tauri/target/
+src-tauri/gen/

@@ -2202,6 +2202,7 @@ function setupIpcListeners() {
 
 // Test hooks (pure helpers and state setters; harmless in production)
 window.__freesiaTest = {
+  canSuspend: () => !isRecording && !isStartingRecording && !isStoppingRecording && !isProcessingAudio && !readyMic && !settingsMicTimer && !obMeterTimer,
   normalizeStats, localDateString, formatDuration, buildSnippetInstructions, buildToolInstructions, anyToolEnabled, expandSnippets,
   buildFormatPrompt, stripWrapping, getAllStyles, engineOrder, pickFormatter, isEngineReady, buildAudioConstraints, openMicrophoneStream,
   startRecording, stopRecording, processAudio, renderUpdateStatus, installUpdate, keyFromEvent, spokenLanguage, geminiInstruction,
