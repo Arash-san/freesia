@@ -1,7 +1,7 @@
 {
   "name": "freesia",
   "version": "3.1.1",
-  "description": "Freesia - free, open-source voice dictation for Windows. Self-hosted, on-device or Gemini speech recognition. Speak freely. Write beautifully.",
+  "description": "Freesia - free, open-source voice dictation for Windows and macOS. Self-hosted, on-device or Gemini speech recognition. Speak freely. Write beautifully.",
   "main": "src/main/main.js",
   "license": "MIT",
   "author": "Freesia Contributors",
@@ -20,6 +20,7 @@
     "test:native": "node test/run-native.cjs",
     "build": "electron-builder",
     "package": "electron-builder --win --x64",
+    "package:mac": "electron-builder --mac --publish never",
     "release": "electron-builder --win --x64 --publish always",
     "shots": "node test/run-shots.cjs"
   },
@@ -50,6 +51,27 @@
       "installerSidebar": "assets/installer-sidebar.bmp",
       "uninstallerSidebar": "assets/installer-sidebar.bmp"
     },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
+      "icon": "assets/icon.png",
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Freesia listens to your voice while you dictate.",
+        "NSAppleEventsUsageDescription": "Freesia pastes your dictation into the app you are using."
+      }
+    },
+    "afterPack": "scripts/adhoc-sign.cjs",
     "files": [
       "src/**/*",
       "assets/**/*"

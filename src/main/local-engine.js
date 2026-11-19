@@ -1,5 +1,5 @@
 // On-device transcription: Qwen3-ASR (GGUF) served by a bundled llama.cpp
-// Vulkan build. Nothing is installed system-wide; the runtime and model live
+// Vulkan build (Metal on macOS). Nothing is installed system-wide; the runtime and model live
 // in %APPDATA%\freesia\engines and are verified by SHA-256 after download.
 // The server listens on 127.0.0.1 with a random API key, so neither other
 // local programs nor web pages can use it.
@@ -11,12 +11,25 @@ const { Readable } = require('stream');
 const { EngineError, deadlineFor } = require('./engines');
 const { parseWav, encodeWav, splitAtPauses } = require('./wav');
 
-const RUNTIME = {
-  version: 'b11182',
-  url: 'https://github.com/ggml-org/llama.cpp/releases/download/b11182/llama-b11182-bin-win-vulkan-x64.zip',
-  sha256: 'aceb42215efc1c85acb3e10e5cb9d9d2bf9e49541b21873e54d66ddb9f97cd0a',
-  size: 32460984
+const LLAMA = 'https://github.com/ggml-org/llama.cpp/releases/download/b11182';
+const RUNTIMES = {
+  'win32-x64': {
+    url: `${LLAMA}/llama-b11182-bin-win-vulkan-x64.zip`,
+    sha256: 'aceb42215efc1c85acb3e10e5cb9d9d2bf9e49541b21873e54d66ddb9f97cd0a',
+    size: 32460984, archive: 'zip', exe: 'llama-server.exe'
+  },
+  'darwin-arm64': {
+    url: `${LLAMA}/llama-b11182-bin-macos-arm64.tar.gz`,
+    sha256: 'ca2000b4037c3a467ec0758538af7e6f2b4dc2904f593bbedf4b28a97b6c444a',
+    size: 11205040, archive: 'tar.gz', exe: 'llama-server'
+  },
+  'darwin-x64': {
+    url: `${LLAMA}/llama-b11182-bin-macos-x64.tar.gz`,
+    sha256: '0cd19731fc02ec51776f5ab03921400bb46a460166f7b6f46f45c9edf8231fbd',
+    size: 11249831, archive: 'tar.gz', exe: 'llama-server'
+  }
 };
+const RUNTIME = { version: 'b11182', ...(RUNTIMES[`${process.platform}-${process.arch}`] || RUNTIMES['win32-x64']) };
 
 const HF = 'https://huggingface.co/ggml-org';
 const MODELS = {
@@ -48,7 +61,7 @@ const CHUNK_SECONDS = 300;
 function pickDevice(listOutput) {
   const devices = [];
   for (const line of String(listOutput).split(/\r?\n/)) {
-    const m = /^\s*(Vulkan\d+):\s*(.+?)\s*\((\d+)\s*MiB/.exec(line);
+    const m = /^\s*(Vulkan\d+|MTL\d+|Metal\d*):\s*(.+?)\s*\((\d+)\s*MiB/.exec(line);
     if (m) devices.push({ id: m[1], name: m[2], mib: Number(m[3]) });
   }
   const integrated = /(Intel\(R\) (UHD|Iris|HD)|Radeon\(TM\) Graphics|Microsoft Basic)/i;
@@ -64,7 +77,7 @@ function cleanText(text) {
 function createLocalEngine({ userDataDir, store, secrets, log = () => {}, onStatus = () => {}, fetchImpl = (...a) => fetch(...a) }) {
   const root = path.join(userDataDir, 'engines');
   const runtimeDir = path.join(root, `llama-${RUNTIME.version}`);
-  const exe = path.join(runtimeDir, 'llama-server.exe');
+  const exe = path.join(runtimeDir, RUNTIME.exe);
   let proc = null;
   let port = 0;
   let device = null;
@@ -138,11 +151,15 @@ function createLocalEngine({ userDataDir, store, secrets, log = () => {}, onStat
     fs.renameSync(part, dest);
   }
 
-  function extractZip(zip, dir) {
+  function extractRuntime(archive, dir) {
     return new Promise((resolve, reject) => {
       fs.mkdirSync(dir, { recursive: true });
-      // tar.exe ships with Windows 10+ and reads zip archives
-      execFile(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'), ['-xf', zip, '-C', dir], { windowsHide: true, timeout: 120000 },
+      // tar.exe ships with Windows 10+ and reads zip archives; the macOS
+      // archive wraps everything in a llama-<version>/ folder
+      const [tar, args] = RUNTIME.archive === 'zip'
+        ? [path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'), ['-xf', archive, '-C', dir]]
+        : ['/usr/bin/tar', ['-xzf', archive, '-C', dir, '--strip-components', '1']];
+      execFile(tar, args, { windowsHide: true, timeout: 120000 },
         (err) => (err ? reject(new EngineError('config', `Could not unpack the runtime: ${err.message}`)) : resolve()));
     });
   }
@@ -151,7 +168,7 @@ function createLocalEngine({ userDataDir, store, secrets, log = () => {}, onStat
     if (!MODELS[modelId]) throw new EngineError('config', 'Unknown model');
     if (download) throw new EngineError('config', 'A download is already running.');
     const needed = [];
-    if (!runtimeInstalled()) needed.push({ ...RUNTIME, name: `llama-${RUNTIME.version}.zip`, runtime: true });
+    if (!runtimeInstalled()) needed.push({ ...RUNTIME, name: `llama-${RUNTIME.version}.${RUNTIME.archive}`, runtime: true });
     for (const f of MODELS[modelId].files) {
       try { if (fs.statSync(path.join(modelDir(modelId), f.name)).size === f.size) continue; } catch { /* missing */ }
       needed.push(f);
@@ -173,7 +190,7 @@ function createLocalEngine({ userDataDir, store, secrets, log = () => {}, onStat
         base += f.size;
         download.received = base;
         if (f.runtime) {
-          await extractZip(dest, runtimeDir);
+          await extractRuntime(dest, runtimeDir);
           fs.rmSync(dest, { force: true });
         }
       }
@@ -300,4 +317,4 @@ function createLocalEngine({ userDataDir, store, secrets, log = () => {}, onStat
   return { id: 'local', status, install, cancelInstall, remove, start, stop, transcribe, listDevices };
 }
 
-module.exports = { createLocalEngine, pickDevice, cleanText, MODELS, RUNTIME };
+module.exports = { createLocalEngine, pickDevice, cleanText, MODELS, RUNTIME, RUNTIMES };

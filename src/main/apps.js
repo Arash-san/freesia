@@ -2,10 +2,15 @@
 // style rules. Sources: Start menu shortcuts, the App Paths registry key,
 // and windows that are open right now (covers Microsoft Store apps).
 // Keys are lower-case executable names without ".exe", which is exactly
-// what foreground-app detection reports.
+// what foreground-app detection reports. On macOS the sources are the
+// Applications folders and running Dock apps, keyed by mac-apps.js.
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
+const { macAppKey, runningApps } = require('./mac-apps');
+
+const isMac = process.platform === 'darwin';
 
 function walk(dir, out = [], depth = 0) {
   if (depth > 4) return out;
@@ -13,8 +18,8 @@ function walk(dir, out = [], depth = 0) {
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
   for (const e of entries) {
     const p = path.join(dir, e.name);
-    if (e.isDirectory()) walk(p, out, depth + 1);
-    else if (/\.lnk$/i.test(e.name)) out.push(p);
+    if (e.isDirectory() && !/\.app$/i.test(e.name)) walk(p, out, depth + 1);
+    else if (isMac ? /\.app$/i.test(e.name) : /\.lnk$/i.test(e.name)) out.push(p);
   }
   return out;
 }
@@ -33,6 +38,7 @@ function createAppScanner({ app, shell, log = () => {} }) {
 
   // One PowerShell pass for many icons: real Office icons and Store app logos
   async function batchIcons(list) {
+    if (isMac) return; // app.getFileIcon reads .app icons directly
     const todo = list.filter((a) => !iconCache.has(a.exe));
     if (!todo.length) return;
     const script = path.join(app.getPath('userData'), 'freesia-app-icons.ps1');
@@ -61,8 +67,8 @@ function createAppScanner({ app, shell, log = () => {} }) {
   }
 
   function add(map, exe, name, source) {
-    if (!exe || !/\.exe$/i.test(exe)) return;
-    const key = path.basename(exe, path.extname(exe)).toLowerCase();
+    if (!exe || !(isMac ? /\.app$/i : /\.exe$/i).test(exe)) return;
+    const key = isMac ? macAppKey(exe) : path.basename(exe, path.extname(exe)).toLowerCase();
     if (/^(uninst|unins\d+|setup|update|updater|helper|crashpad|elevate)/.test(key)) return;
     if (!map.has(key)) map.set(key, { key, name: name || key, exe, source });
   }
@@ -78,6 +84,15 @@ function createAppScanner({ app, shell, log = () => {} }) {
     };
     if (cache && !force && Date.now() - cacheAt < 5 * 60000) return withIcons(cache);
     const map = new Map();
+    if (isMac) {
+      const roots = ['/Applications', '/System/Applications', path.join(os.homedir(), 'Applications')];
+      for (const bundle of roots.flatMap((r) => walk(r, [], 2))) add(map, bundle, path.basename(bundle, '.app'), 'installed');
+      for (const r of await openWindows()) add(map, r.exe, r.name, 'running');
+      cache = [...map.values()];
+      cacheAt = Date.now();
+      log('INFO', 'apps', `Found ${cache.length} apps`);
+      return withIcons(cache);
+    }
     const roots = [
       path.join(process.env.ProgramData || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
       path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs')
@@ -104,6 +119,7 @@ function createAppScanner({ app, shell, log = () => {} }) {
   }
 
   async function openWindows() {
+    if (isMac) return (await runningApps()).map((a) => ({ exe: a.bundle, name: a.name, title: '' }));
     const out = await ps("Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.Path } | ForEach-Object { '{0}|{1}|{2}' -f $_.Path, $_.Description, $_.MainWindowTitle }");
     const rows = [];
     for (const line of out.split(/\r?\n/)) {
@@ -118,7 +134,7 @@ function createAppScanner({ app, shell, log = () => {} }) {
     const seen = new Set();
     const out = [];
     for (const r of rows) {
-      const key = path.basename(r.exe, '.exe').toLowerCase();
+      const key = isMac ? macAppKey(r.exe) : path.basename(r.exe, '.exe').toLowerCase();
       if (seen.has(key) || key === 'freesia') continue;
       seen.add(key);
       out.push({ key, name: r.name || key, title: r.title, exe: r.exe });

@@ -26,6 +26,12 @@ Freesia 3 no longer needs a paid API. It can transcribe with a self hosted serve
 
 Freesia for Android dictates into any app through an accessibility service: focus a text field, tap the floating bloom, speak, and the text lands at your cursor. Choose Freesia Cloud or Gemini in Settings → Speech engine → Configure. Gemini uses your Google AI Studio API key for transcription and formatting. The app keeps every recording until its text is delivered so a failed take can be retried, and updates itself from GitHub. Download `Freesia-Android-<version>.apk` from the newest [android release](https://github.com/Arash-san/freesia/releases?q=android&expanded=true). Details are in [android/README.md](android/README.md).
 
+## macOS
+
+Freesia also runs on macOS 11 or newer, on Apple silicon and Intel Macs. The default shortcuts are `⌘⇧Space` for dictation and `⌘⌥⇧Space` for command mode. On first use, macOS asks for two permissions. Allow **Microphone**. Then turn Freesia on under System Settings → Privacy & Security → **Accessibility**, so it can paste into other apps. Without Accessibility the text stays on your clipboard for `⌘V`. The on device engine uses the Metal build of llama.cpp. The disk images are ad-hoc signed and not notarized, so the first time you open Freesia, right-click the app and choose Open (or run `xattr -cr /Applications/Freesia.app`). Automatic updates are off on macOS.
+
+Build the disk images on a Mac with `npm run package:mac`, or take them from the `freesia-macos` artifact of the macOS workflow.
+
 ## Speech engines
 
 | Engine | Model | Where audio goes | Setup |

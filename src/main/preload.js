@@ -7,6 +7,8 @@ const on = (channel, map = (...a) => a[1]) => (callback) => {
 };
 
 contextBridge.exposeInMainWorld('freesia', {
+  platform: process.platform,
+
   // Settings (secrets never cross this bridge)
   getSettings: () => ipcRenderer.invoke('get-settings'),
   setSetting: (key, value) => ipcRenderer.invoke('set-setting', key, value),
