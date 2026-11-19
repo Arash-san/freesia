@@ -138,7 +138,7 @@ const local = createLocalEngine({
   onStatus: (s) => sendToMain('local-status', s)
 });
 const engines = { cloud, local, gemini };
-const appScanner = createAppScanner({ app, shell, log: writeLog });
+const appScanner = createAppScanner({ app, shell, nativeImage, log: writeLog });
 let keys = null;
 
 function getStylesDir() {

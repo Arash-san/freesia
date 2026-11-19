@@ -31,14 +31,14 @@ function ps(script, timeout = 8000) {
   });
 }
 
-function createAppScanner({ app, shell, log = () => {} }) {
+function createAppScanner({ app, shell, nativeImage, log = () => {} }) {
   let cache = null;
   let cacheAt = 0;
   const iconCache = new Map();
 
   // One PowerShell pass for many icons: real Office icons and Store app logos
   async function batchIcons(list) {
-    if (isMac) return; // app.getFileIcon reads .app icons directly
+    if (isMac) return; // icon() reads .app icons through QuickLook
     const todo = list.filter((a) => !iconCache.has(a.exe));
     if (!todo.length) return;
     const script = path.join(app.getPath('userData'), 'freesia-app-icons.ps1');
@@ -59,7 +59,10 @@ function createAppScanner({ app, shell, log = () => {} }) {
     if (iconCache.has(exe)) return iconCache.get(exe);
     let url = '';
     try {
-      const img = await app.getFileIcon(exe, { size: 'large' });
+      // app.getFileIcon hits a Chromium NOTREACHED crash for .app bundles on macOS 26
+      const img = isMac
+        ? await nativeImage.createThumbnailFromPath(exe, { width: 64, height: 64 })
+        : await app.getFileIcon(exe, { size: 'large' });
       if (!img.isEmpty()) url = img.toDataURL();
     } catch { /* no icon */ }
     iconCache.set(exe, url);

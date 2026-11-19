@@ -35,7 +35,7 @@ a.isNil() ? '' : (a.bundleURL.isNil() ? a.localizedName.js : a.bundleURL.path.js
 // Regular (Dock) apps only: path|name per line
 const RUNNING = `ObjC.import('AppKit');
 const list = $.NSWorkspace.sharedWorkspace.runningApplications.js;
-list.filter((a) => a.activationPolicy === 0 && !a.bundleURL.isNil())
+list.filter((a) => Number(a.activationPolicy) === 0 && !a.bundleURL.isNil())
   .map((a) => a.bundleURL.path.js + '|' + (a.localizedName.isNil() ? '' : a.localizedName.js)).join('\\n')`;
 
 async function frontmostApp() {
