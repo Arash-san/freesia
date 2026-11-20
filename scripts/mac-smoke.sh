@@ -26,9 +26,10 @@ launch() {
   $prefix "$work/Freesia.app/Contents/MacOS/Freesia" > "$work/stdout.log" 2>&1 &
   pid=$!
   # Wait for the app's own "starting" log line. The Intel build is slow the first
-  # time, because Rosetta translates it, so allow two minutes.
+  # time, because Rosetta translates it (about two minutes on a hosted runner),
+  # so allow five.
   log=""
-  for _ in $(seq 60); do
+  for _ in $(seq 150); do
     sleep 2
     kill -0 "$pid" 2>/dev/null || break
     log="$(find "$support/freesia" "$support/Freesia" -maxdepth 1 -name freesia.log 2>/dev/null | head -1)"
