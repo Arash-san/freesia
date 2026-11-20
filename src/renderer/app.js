@@ -849,7 +849,7 @@ async function processAudio(audioBlob, mode, { existingBase = null, selection = 
     const ok = await api.injectText(finalText);
     delivered = ok === false ? 'clipboard' : 'typed';
     if (ok === false) toast(isMac
-      ? 'Could not type into that app. Allow Freesia in System Settings → Privacy & Security → Accessibility. The text is on your clipboard: press ⌘V.'
+      ? 'Could not type into that app. Allow Freesia in System Settings → Privacy & Security → Accessibility. If it is already on, turn it off and on again: a new build of Freesia needs a fresh approval. The text is on your clipboard: press ⌘V.'
       : 'Could not type into that app. The text is on your clipboard: press Ctrl+V.', 'error', 5000);
   } else if (mode === 'retry') {
     await api.copyText(finalText);
