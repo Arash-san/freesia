@@ -13,7 +13,7 @@ dmgs=(dist/*.dmg)
 support="$HOME/Library/Application Support"
 host="$(uname -m)"
 
-# Start the app from a copy, give it 20 s, then read its own log
+# Start the app from a copy, wait until it has started, then read its own log
 launch() {
   local app="$1" prefix="$2" work pid log
   work="$(mktemp -d)"
@@ -25,15 +25,24 @@ launch() {
   done
   $prefix "$work/Freesia.app/Contents/MacOS/Freesia" > "$work/stdout.log" 2>&1 &
   pid=$!
-  sleep 20
-  log="$(find "$support/freesia" "$support/Freesia" -maxdepth 1 -name freesia.log 2>/dev/null | head -1)"
+  # Wait for the app's own "starting" log line. The Intel build is slow the first
+  # time, because Rosetta translates it, so allow two minutes.
+  log=""
+  for _ in $(seq 60); do
+    sleep 2
+    kill -0 "$pid" 2>/dev/null || break
+    log="$(find "$support/freesia" "$support/Freesia" -maxdepth 1 -name freesia.log 2>/dev/null | head -1)"
+    [ -n "$log" ] && grep -q "\[app\] Freesia .* starting" "$log" && break
+  done
+  # Then it has to stay up
+  sleep 10
   if ! kill -0 "$pid" 2>/dev/null; then
     cat "$work/stdout.log"; [ -n "$log" ] && cat "$log"
-    fail "Freesia exited within 20 s of starting"
+    fail "Freesia exited soon after starting"
   fi
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  [ -n "$log" ] || fail "Freesia wrote no log file"
+  [ -n "$log" ] || { cat "$work/stdout.log"; fail "Freesia wrote no log file"; }
   grep -q "\[app\] Freesia .* starting" "$log" || { cat "$log"; fail "Freesia did not finish starting"; }
   if grep -q "\[FATAL\]" "$log"; then cat "$log"; fail "Freesia logged a fatal error while starting"; fi
   echo "  started and stayed up: $(grep -m1 "starting" "$log")"

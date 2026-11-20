@@ -186,6 +186,7 @@ function setupAutoUpdater() {
   updateController = createUpdateController({
     // No macOS releases are published (and unsigned apps cannot self-update), so updates stay off there
     updater: autoUpdater, publish: sendUpdateStatus, packaged: app.isPackaged && !isMac,
+    ...(isMac && app.isPackaged ? { disabledMessage: 'Freesia does not update itself on macOS. Download the newest disk image from the Releases page on GitHub.' } : {}),
     canInstall: () => !isRecording && !isProcessing,
     beforeInstall: () => { app.isQuitting = true; },
     installFailed: () => { app.isQuitting = false; },

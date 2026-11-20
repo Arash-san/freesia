@@ -6,6 +6,7 @@ const { $, $$, h, escapeHtml, icon, isRtl, toast, dialog, confirmDialog, countUp
 const isMac = api?.platform === 'darwin';
 const OS_NAME = isMac ? 'macOS' : 'Windows';
 const PASTE_KEYS = isMac ? '⌘V' : 'Ctrl+V';
+const THIS_COMPUTER = isMac ? 'On this Mac' : 'On this PC';
 
 // ---------------------------------------------------------- state
 let settings = {};
@@ -31,7 +32,7 @@ let homeOrb = null;
 let obOrb = null;
 let lastOutputText = '';
 
-const ENGINE_LABELS = { cloud: 'Freesia Cloud', local: 'On this PC', gemini: 'Google Gemini' };
+const ENGINE_LABELS = { cloud: 'Freesia Cloud', local: isMac ? 'On this Mac' : 'On this PC', gemini: 'Google Gemini' };
 const FALLBACK_ORDER = ['cloud', 'local', 'gemini'];
 const TYPING_WPM = 40;
 const LANGUAGES = [
@@ -1458,7 +1459,7 @@ function renderAppRules() {
     return h(`div.app-row.list-enter${r.installed ? '' : '.absent'}`, { style: { '--i': Math.min(i, 24) } }, [
       appIconEl(r),
       h('span.app-row-text', {}, [h('span.app-row-name', { text: r.name }),
-        h('span.app-row-meta', { text: `${r.custom ? 'Added by you' : r.installed ? (r.overridden ? 'On this PC · your choice' : 'On this PC') : 'Not installed'}${nameCount[r.name] > 1 ? ` · ${r.key}.exe` : ''}` })]),
+        h('span.app-row-meta', { text: `${r.custom ? 'Added by you' : r.installed ? (r.overridden ? `${THIS_COMPUTER} · your choice` : THIS_COMPUTER) : 'Not installed'}${nameCount[r.name] > 1 ? ` · ${r.key}${isMac ? '' : '.exe'}` : ''}` })]),
       select, ...actions
     ]);
   }));

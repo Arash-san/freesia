@@ -18,8 +18,9 @@ function walk(dir, out = [], depth = 0) {
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
   for (const e of entries) {
     const p = path.join(dir, e.name);
-    if (e.isDirectory() && !/\.app$/i.test(e.name)) walk(p, out, depth + 1);
-    else if (isMac ? /\.app$/i.test(e.name) : /\.lnk$/i.test(e.name)) out.push(p);
+    const bundle = isMac && /\.app$/i.test(e.name);
+    if (e.isDirectory() && !bundle) walk(p, out, depth + 1);
+    else if (bundle || (!isMac && /\.lnk$/i.test(e.name))) out.push(p);
   }
   return out;
 }
