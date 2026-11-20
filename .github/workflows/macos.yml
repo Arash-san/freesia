@@ -1,15 +1,19 @@
 name: macOS
 
+# Builds and checks the macOS app on every desktop change, and for every release:
+# release.yml calls this workflow first and only publishes if it passes.
+
 on:
   push:
     branches:
-      - "feat/macos*"
+      - main
     paths-ignore:
       - "android/**"
   pull_request:
     paths-ignore:
       - "android/**"
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -35,15 +39,17 @@ jobs:
       - name: Run tests
         run: npm test
 
-      # Informational: hosted runners may not grant microphone access to the fake device
       - name: Test native recording and overlay
         run: npm run test:native
-        continue-on-error: true
 
       - name: Build disk images
         run: npm run package:mac
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      # Mounts each disk image, verifies the signature and starts the packaged app
+      - name: Check the packaged app starts
+        run: bash scripts/mac-smoke.sh
 
       - name: Upload disk images
         uses: actions/upload-artifact@v4

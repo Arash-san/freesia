@@ -4,7 +4,7 @@
 
 # Freesia
 
-Free, open source voice dictation for Windows. Speak freely. Write beautifully.
+Free, open source voice dictation for Windows and macOS, with an Android app. Speak freely. Write beautifully.
 
 <p>
   <a href="https://github.com/Arash-san/freesia/releases/latest">
@@ -16,6 +16,7 @@ Free, open source voice dictation for Windows. Speak freely. Write beautifully.
 </p>
 
 [![Release](https://github.com/Arash-san/freesia/actions/workflows/release.yml/badge.svg)](https://github.com/Arash-san/freesia/actions/workflows/release.yml)
+[![macOS](https://github.com/Arash-san/freesia/actions/workflows/macos.yml/badge.svg)](https://github.com/Arash-san/freesia/actions/workflows/macos.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 Freesia lives in your tray. Press a shortcut in any app, talk, press it again, and your words are typed where your cursor is. A style decides how the text reads: faithful, casual, a formal email, bullet points, or anything you describe yourself.
@@ -28,9 +29,9 @@ Freesia for Android dictates into any app through an accessibility service: focu
 
 ## macOS
 
-Freesia also runs on macOS 11 or newer, on Apple silicon and Intel Macs. The default shortcuts are `⌘⇧Space` for dictation and `⌘⌥⇧Space` for command mode. On first use, macOS asks for two permissions. Allow **Microphone**. Then turn Freesia on under System Settings → Privacy & Security → **Accessibility**, so it can paste into other apps. Without Accessibility the text stays on your clipboard for `⌘V`. The on device engine uses the Metal build of llama.cpp. The disk images are ad-hoc signed and not notarized, so the first time you open Freesia, right-click the app and choose Open (or run `xattr -cr /Applications/Freesia.app`). Automatic updates are off on macOS.
+Freesia also runs on macOS 11 or newer, on Apple silicon and Intel Macs. The default shortcuts are `⌘⇧Space` for dictation and `⌘⌥⇧Space` for command mode. On first use, macOS asks for two permissions. Allow **Microphone**. Then turn Freesia on under System Settings → Privacy & Security → **Accessibility**, so it can paste into other apps. Without Accessibility the text stays on your clipboard for `⌘V`. The on device engine uses llama.cpp: with Metal on Apple silicon, on the processor on Intel Macs. The disk images are ad-hoc signed and not notarized, so the first time you open Freesia, right-click the app and choose Open (or run `xattr -cr /Applications/Freesia.app`). Automatic updates are off on macOS, so install a newer disk image by hand. After each new version, turn Accessibility off and on again for Freesia, because macOS treats it as a new app.
 
-Build the disk images on a Mac with `npm run package:mac`, or take them from the `freesia-macos` artifact of the macOS workflow.
+Every desktop release after 3.1.1 includes two disk images: `Freesia-<version>-mac-arm64.dmg` for Apple silicon and `Freesia-<version>-mac-x64.dmg` for Intel. Until that release is out, take them from the `freesia-macos` artifact of the newest [macOS workflow](https://github.com/Arash-san/freesia/actions/workflows/macos.yml) run on `main`, or build them on a Mac with `npm run package:mac`. The workflow builds both images for every desktop change, checks their signature, and starts the packaged app. A release is published only when that passes.
 
 ## Speech engines
 
