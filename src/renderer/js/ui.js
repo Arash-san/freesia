@@ -168,7 +168,7 @@
   }
 
   // On macOS "Ctrl" in a stored shortcut means Cmd (Electron's CommandOrControl)
-  const MAC_KEYS = { Ctrl: '⌘', Super: '⌘', Control: '⌃', Alt: '⌥', Shift: '⇧' };
+  const MAC_KEYS = { Ctrl: '⌘', Super: '⌘', Control: '⌃', Alt: '⌥', Shift: '⇧', Up: '↑', Down: '↓', Left: '←', Right: '→' };
   const keyLabel = (k) => (root.freesia?.platform === 'darwin' && MAC_KEYS[k]) || k;
   function shortcutText(shortcut) {
     return String(shortcut || '').split('+').filter(Boolean).map(keyLabel).join('+');

@@ -2036,14 +2036,20 @@ async function beginShortcutRecording(button) {
   await api.suspendShortcuts?.();
   button.classList.add('recording');
   button.innerHTML = '<span class="rec-hint">Press the new shortcut… (Esc to cancel)</span>';
+  const held = new Set();
   const finish = async (combo) => {
     window.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('keyup', onKeyUp, true);
     window.removeEventListener('blur', onBlur);
     shortcutRecorder = null;
     button.classList.remove('recording');
     if (combo) {
       const res = await api.setShortcut(button.dataset.shortcut, combo);
-      if (res?.ok) { settings[button.dataset.shortcut] = combo; toast(`Shortcut set to ${shortcutText(combo)}`, 'success'); }
+      if (res?.ok) {
+        settings[button.dataset.shortcut] = combo;
+        if (res.warning) toast(`Shortcut set to ${shortcutText(combo)}. ${res.warning}`, 'info', 8000);
+        else toast(`Shortcut set to ${shortcutText(combo)}`, 'success');
+      }
       else toast(res?.message || 'That shortcut could not be used.', 'error', 5000);
     } else {
       await api.registerShortcuts();
@@ -2061,11 +2067,25 @@ async function beginShortcutRecording(button) {
       ? [e.metaKey && 'Ctrl', e.ctrlKey && 'Control', e.altKey && 'Alt', e.shiftKey && 'Shift'].filter(Boolean)
       : [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Super'].filter(Boolean);
     if (!key) { button.innerHTML = `<span class="kbd-group">${kbdHtml(mods.join('+'))}</span><span class="rec-hint">+ …</span>`; return; }
-    if (!mods.length && !/^F\d/.test(key)) { button.innerHTML = `<span class="rec-hint">${isMac ? 'Add ⌘, ⌥, ⌃ or ⇧' : 'Add Ctrl, Alt or Shift'}</span>`; return; }
+    if (!mods.length && !/^F\d/.test(key)) {
+      // System shortcuts are modifiers plus one key, so a chord like Space+Up can never register
+      const other = [...held].find((k) => k !== key);
+      held.add(key);
+      if (!e.repeat && other) {
+        const suggestion = `${isMac ? 'Control' : 'Ctrl'}+Alt+${key}`;
+        button.innerHTML = `<span class="rec-hint">Try</span><span class="kbd-group">${kbdHtml(suggestion)}</span>`;
+        toast(`${shortcutText(`${other}+${key}`)} can't be a shortcut. ${OS_NAME} only allows ${isMac ? '⌘, ⌥, ⌃ or ⇧' : 'Ctrl, Alt or Shift'} plus one other key, for example ${shortcutText(suggestion)}.`, 'info', 6000);
+        return;
+      }
+      button.innerHTML = `<span class="rec-hint">${isMac ? 'Hold ⌘, ⌥, ⌃ or ⇧ with one key' : 'Hold Ctrl, Alt or Shift with one key'}</span>`;
+      return;
+    }
     finish([...mods, key].join('+'));
   };
+  const onKeyUp = (e) => held.delete(keyFromEvent(e));
   const onBlur = () => finish(null);
   shortcutRecorder = { finish };
+  window.addEventListener('keyup', onKeyUp, true);
   window.addEventListener('keydown', onKey, true);
   window.addEventListener('blur', onBlur);
 }

@@ -357,6 +357,28 @@ function createTray() {
   tray.on('click', () => showMainWindow());
 }
 
+// macOS keeps these for itself even when globalShortcut.register succeeds ("Ctrl" is Cmd here)
+const MAC_SYSTEM_SHORTCUTS = {
+  'Ctrl+Space': 'opens Spotlight',
+  'Alt+Ctrl+Space': 'opens Finder search',
+  'Control+Space': 'switches input source',
+  'Alt+Control+Space': 'switches input source',
+  'Control+Up': 'opens Mission Control',
+  'Control+Down': 'shows app windows',
+  'Control+Left': 'switches desktops',
+  'Control+Right': 'switches desktops',
+  'Ctrl+Tab': 'switches apps',
+  'Ctrl+Shift+3': 'takes a screenshot',
+  'Ctrl+Shift+4': 'takes a screenshot',
+  'Ctrl+Shift+5': 'takes a screenshot',
+};
+
+function macSystemUse(shortcut) {
+  const parts = String(shortcut || '').split('+');
+  const key = parts.pop();
+  return MAC_SYSTEM_SHORTCUTS[[...parts.sort(), key].join('+')] || null;
+}
+
 function toAccelerator(shortcut) {
   return String(shortcut || '').replace(/\bCtrl\b/g, 'CommandOrControl');
 }
@@ -603,6 +625,8 @@ ipcMain.handle('set-shortcut', (_, key, value) => {
     registerShortcuts();
     return { ok: false, message: `${value} is already used by another app or ${isMac ? 'macOS' : 'Windows'}.` };
   }
+  const use = isMac && macSystemUse(value);
+  if (use) return { ok: true, warning: `macOS also uses this combination: it ${use}. Turn that off in System Settings → Keyboard → Keyboard Shortcuts, or pick another one.` };
   return { ok: true };
 });
 // While the user records a new shortcut, the old ones must not fire
