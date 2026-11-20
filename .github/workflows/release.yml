@@ -10,8 +10,16 @@ permissions:
   contents: write
 
 jobs:
+  # The macOS app is built and checked first. A release is only published if it passes.
+  macos:
+    name: macOS
+    uses: ./.github/workflows/macos.yml
+    permissions:
+      contents: read
+
   windows:
     name: Build and publish Windows installer
+    needs: macos
     runs-on: windows-latest
 
     steps:
@@ -62,3 +70,22 @@ jobs:
             dist/*.yml
             dist/*.blockmap
           if-no-files-found: error
+
+  # Adds the disk images built by the macos job to the release the windows job published
+  macos-release:
+    name: Attach macOS disk images to the release
+    needs: [macos, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download disk images
+        uses: actions/download-artifact@v4
+        with:
+          name: freesia-macos
+          path: dist
+
+      - name: Upload disk images to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.dmg --clobber --repo "$GITHUB_REPOSITORY"

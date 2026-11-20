@@ -2,7 +2,11 @@
 // Freesia 3 — renderer
 // ==========================================================
 const api = window.freesia;
-const { $, $$, h, escapeHtml, icon, isRtl, toast, dialog, confirmDialog, countUp, segmented, formatDuration, clock, bytes, kbdHtml, dayLabel, revealText } = window.UI;
+const { $, $$, h, escapeHtml, icon, isRtl, toast, dialog, confirmDialog, countUp, segmented, formatDuration, clock, bytes, kbdHtml, shortcutText, dayLabel, revealText } = window.UI;
+const isMac = api?.platform === 'darwin';
+const OS_NAME = isMac ? 'macOS' : 'Windows';
+const PASTE_KEYS = isMac ? '⌘V' : 'Ctrl+V';
+const THIS_COMPUTER = isMac ? 'On this Mac' : 'On this PC';
 
 // ---------------------------------------------------------- state
 let settings = {};
@@ -28,7 +32,7 @@ let homeOrb = null;
 let obOrb = null;
 let lastOutputText = '';
 
-const ENGINE_LABELS = { cloud: 'Freesia Cloud', local: 'On this PC', gemini: 'Google Gemini' };
+const ENGINE_LABELS = { cloud: 'Freesia Cloud', local: isMac ? 'On this Mac' : 'On this PC', gemini: 'Google Gemini' };
 const FALLBACK_ORDER = ['cloud', 'local', 'gemini'];
 const TYPING_WPM = 40;
 const LANGUAGES = [
@@ -65,6 +69,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   activeStyleId = settings.activeStyle || 'normal';
   try { engineState = await api.engineStatus?.() || engineState; } catch (e) { logError('engineStatus', e); }
 
+  if (isMac) applyMacChrome();
   bindChrome();
   bindOnboarding();
   bindHome();
@@ -166,15 +171,24 @@ function positionNavIndicator() {
   ind.style.transform = `translateY(${active.offsetTop}px)`;
 }
 
+// macOS draws its own window buttons; the static copy names the right OS
+function applyMacChrome() {
+  document.body.classList.add('platform-darwin');
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    if (n.nodeValue.includes('Windows')) n.nodeValue = n.nodeValue.replace(/Windows/g, 'macOS');
+  }
+}
+
 function bindChrome() {
   $('btnMinimize')?.addEventListener('click', () => api.minimize());
   $('btnMaximize')?.addEventListener('click', () => api.toggleMaximize?.());
   $('btnClose')?.addEventListener('click', () => api.close());
   $$('.nav-item[data-view]').forEach((b) => b.addEventListener('click', () => showView(b.dataset.view)));
   $('enginePill')?.addEventListener('click', () => showView('engines'));
-  // Ctrl+1..6 jumps between views
+  // Ctrl+1..6 (Cmd on macOS) jumps between views
   document.addEventListener('keydown', (e) => {
-    if (!e.ctrlKey || e.shiftKey || e.altKey || shortcutRecorder) return;
+    if (!(isMac ? e.metaKey : e.ctrlKey) || e.shiftKey || e.altKey || shortcutRecorder) return;
     const n = Number(e.key);
     const items = $$('.nav-item[data-view]');
     if (n >= 1 && n <= items.length && $('screenMain').classList.contains('active')) { e.preventDefault(); showView(items[n - 1].dataset.view); }
@@ -482,7 +496,7 @@ async function loadMicrophones() {
     const selectedId = settings.microphoneId || '';
     const available = !selectedId || devices.some((d) => d.deviceId === selectedId);
     for (const select of selects) {
-      select.replaceChildren(new Option('Windows default', ''));
+      select.replaceChildren(new Option(`${OS_NAME} default`, ''));
       devices.forEach((d, i) => select.add(new Option(d.label || `Microphone ${i + 1}`, d.deviceId)));
       if (!available) select.add(new Option('Previous microphone (unplugged)', selectedId));
       select.value = selectedId;
@@ -531,14 +545,16 @@ async function openMicrophoneStream() {
     if (!unavailable) throw e;
     await saveSetting('microphoneId', '');
     loadMicrophones();
-    toast('Your selected microphone is unplugged. Using the Windows default.', 'info');
+    toast(`Your selected microphone is unplugged. Using the ${OS_NAME} default.`, 'info');
     return navigator.mediaDevices.getUserMedia({ audio: buildAudioConstraints('') });
   }
 }
 
 function micErrorMessage(e) {
   if (e?.name === 'NotFoundError') return 'No microphone found. Plug one in and try again.';
-  if (e?.name === 'NotAllowedError') return 'Microphone access is blocked. Allow it in Windows Settings → Privacy → Microphone.';
+  if (e?.name === 'NotAllowedError') return isMac
+    ? 'Microphone access is blocked. Allow Freesia in System Settings → Privacy & Security → Microphone.'
+    : 'Microphone access is blocked. Allow it in Windows Settings → Privacy → Microphone.';
   if (e?.name === 'NotReadableError') return 'Another app is using the microphone exclusively.';
   return 'Could not start the microphone.';
 }
@@ -833,7 +849,9 @@ async function processAudio(audioBlob, mode, { existingBase = null, selection = 
   if (mode === 'dictate-inject' || mode === 'command') {
     const ok = await api.injectText(finalText);
     delivered = ok === false ? 'clipboard' : 'typed';
-    if (ok === false) toast('Could not type into that app. The text is on your clipboard: press Ctrl+V.', 'error', 5000);
+    if (ok === false) toast(isMac
+      ? 'Could not type into that app. Allow Freesia in System Settings → Privacy & Security → Accessibility. If it is already on, turn it off and on again: a new build of Freesia needs a fresh approval. The text is on your clipboard: press ⌘V.'
+      : 'Could not type into that app. The text is on your clipboard: press Ctrl+V.', 'error', 5000);
   } else if (mode === 'retry') {
     await api.copyText(finalText);
     delivered = 'clipboard';
@@ -864,7 +882,7 @@ async function processAudio(audioBlob, mode, { existingBase = null, selection = 
   }
   loadFailedRecordings();
 
-  api.overlayDone?.({ words, label: delivered === 'clipboard' ? 'Copied: press Ctrl+V' : `${words} words` });
+  api.overlayDone?.({ words, label: delivered === 'clipboard' ? `Copied: press ${PASTE_KEYS}` : `${words} words` });
   homeOrb?.setState('done');
   setOrbCaption(mode === 'retry' ? 'Recovered and copied to your clipboard' : 'Done. Tap to go again');
   setTimeout(() => { if (homeOrb?.state === 'done') homeOrb.setState('idle'); }, 1500);
@@ -1441,7 +1459,7 @@ function renderAppRules() {
     return h(`div.app-row.list-enter${r.installed ? '' : '.absent'}`, { style: { '--i': Math.min(i, 24) } }, [
       appIconEl(r),
       h('span.app-row-text', {}, [h('span.app-row-name', { text: r.name }),
-        h('span.app-row-meta', { text: `${r.custom ? 'Added by you' : r.installed ? (r.overridden ? 'On this PC · your choice' : 'On this PC') : 'Not installed'}${nameCount[r.name] > 1 ? ` · ${r.key}.exe` : ''}` })]),
+        h('span.app-row-meta', { text: `${r.custom ? 'Added by you' : r.installed ? (r.overridden ? `${THIS_COMPUTER} · your choice` : THIS_COMPUTER) : 'Not installed'}${nameCount[r.name] > 1 ? ` · ${r.key}${isMac ? '' : '.exe'}` : ''}` })]),
       select, ...actions
     ]);
   }));
@@ -1921,7 +1939,7 @@ function geminiKeyForm(onDone) {
   } });
   return h('div', {}, [
     h('div.inline-form', {}, [h('div.input-wrap.grow', {}, [input, eye]), save]),
-    h('p.hint.mt-8', { html: 'Get a key at <a data-href="https://aistudio.google.com/app/apikey">Google AI Studio</a>. It is encrypted with your Windows account and only sent to Google.' })
+    h('p.hint.mt-8', { html: `Get a key at <a data-href="https://aistudio.google.com/app/apikey">Google AI Studio</a>. It is encrypted with your ${OS_NAME} account and only sent to Google.` })
   ]);
 }
 
@@ -2019,15 +2037,21 @@ async function beginShortcutRecording(button) {
   await api.suspendShortcuts?.();
   button.classList.add('recording');
   button.innerHTML = '<span class="rec-hint">Press the new shortcut… (Esc to cancel)</span>';
+  const held = new Set();
   const finish = async (combo) => {
     window.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('keyup', onKeyUp, true);
     window.removeEventListener('blur', onBlur);
     shortcutRecorder = null;
     button.classList.remove('recording');
     if (combo) {
       const res = await api.setShortcut(button.dataset.shortcut, combo);
-      if (res?.ok) { settings[button.dataset.shortcut] = combo; toast(`Shortcut set to ${combo}`, 'success'); }
-      else toast(res?.message || 'That shortcut could not be used.', 'error', 5000);
+      if (res?.ok) {
+        settings[button.dataset.shortcut] = combo;
+        if (res.warning) toast(`Shortcut set to ${shortcutText(combo)}. ${res.warning}`, 'info', 8000);
+        else toast(`Shortcut set to ${shortcutText(combo)}`, 'success');
+      }
+      else toast((res?.message || 'That shortcut could not be used.').replace(combo, shortcutText(combo)), 'error', 5000);
     } else {
       await api.registerShortcuts();
     }
@@ -2039,13 +2063,30 @@ async function beginShortcutRecording(button) {
     e.stopPropagation();
     if (e.key === 'Escape') return finish(null);
     const key = keyFromEvent(e);
-    const mods = [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Super'].filter(Boolean);
+    // On macOS Cmd is stored as "Ctrl" (CommandOrControl) and the Control key as "Control"
+    const mods = isMac
+      ? [e.metaKey && 'Ctrl', e.ctrlKey && 'Control', e.altKey && 'Alt', e.shiftKey && 'Shift'].filter(Boolean)
+      : [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Super'].filter(Boolean);
     if (!key) { button.innerHTML = `<span class="kbd-group">${kbdHtml(mods.join('+'))}</span><span class="rec-hint">+ …</span>`; return; }
-    if (!mods.length && !/^F\d/.test(key)) { button.innerHTML = '<span class="rec-hint">Add Ctrl, Alt or Shift</span>'; return; }
+    if (!mods.length && !/^F\d/.test(key)) {
+      // System shortcuts are modifiers plus one key, so a chord like Space+Up can never register
+      const other = [...held].find((k) => k !== key);
+      held.add(key);
+      if (!e.repeat && other) {
+        const suggestion = `${isMac ? 'Control' : 'Ctrl'}+Alt+${key}`;
+        button.innerHTML = `<span class="rec-hint">Try</span><span class="kbd-group">${kbdHtml(suggestion)}</span>`;
+        toast(`${shortcutText(`${other}+${key}`)} can't be a shortcut. ${OS_NAME} only allows ${isMac ? '⌘, ⌥, ⌃ or ⇧' : 'Ctrl, Alt or Shift'} plus one other key, for example ${shortcutText(suggestion)}.`, 'info', 6000);
+        return;
+      }
+      button.innerHTML = `<span class="rec-hint">${isMac ? 'Hold ⌘, ⌥, ⌃ or ⇧ with one key' : 'Hold Ctrl, Alt or Shift with one key'}</span>`;
+      return;
+    }
     finish([...mods, key].join('+'));
   };
+  const onKeyUp = (e) => held.delete(keyFromEvent(e));
   const onBlur = () => finish(null);
   shortcutRecorder = { finish };
+  window.addEventListener('keyup', onKeyUp, true);
   window.addEventListener('keydown', onKey, true);
   window.addEventListener('blur', onBlur);
 }
@@ -2116,7 +2157,7 @@ function renderUpdateStatus(state = {}) {
   const busy = ['checking', 'downloading', 'installing'].includes(status);
   const pct = Math.max(0, Math.min(100, Math.round(state.progress?.percent || 0)));
   const txt = $('updateStatusText'); if (txt) txt.textContent = state.message || 'Update checks are ready.';
-  const check = $('btnCheckUpdates'); if (check) check.disabled = busy;
+  const check = $('btnCheckUpdates'); if (check) check.disabled = busy || status === 'disabled';
   const dl = $('btnDownloadUpdate'); if (dl) dl.hidden = status !== 'available';
   const inst = $('btnInstallUpdate'); if (inst) inst.hidden = status !== 'downloaded';
   const prog = $('updateProgress');

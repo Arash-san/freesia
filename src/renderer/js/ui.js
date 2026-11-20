@@ -167,9 +167,16 @@
     return `${Math.round(n / 1e3)} KB`;
   }
 
+  // On macOS "Ctrl" in a stored shortcut means Cmd (Electron's CommandOrControl)
+  const MAC_KEYS = { Ctrl: '⌘', Super: '⌘', Control: '⌃', Alt: '⌥', Shift: '⇧', Up: '↑', Down: '↓', Left: '←', Right: '→' };
+  const keyLabel = (k) => (root.freesia?.platform === 'darwin' && MAC_KEYS[k]) || k;
+  function shortcutText(shortcut) {
+    return String(shortcut || '').split('+').filter(Boolean).map(keyLabel).join('+');
+  }
+
   function kbdHtml(shortcut) {
     return String(shortcut || '').split('+').filter(Boolean)
-      .map((k) => `<kbd>${escapeHtml(k === 'Space' ? '␣ Space' : k)}</kbd>`).join('');
+      .map((k) => `<kbd>${escapeHtml(k === 'Space' ? '␣ Space' : keyLabel(k))}</kbd>`).join('');
   }
 
   function dayLabel(date) {
@@ -196,5 +203,5 @@
     });
   }
 
-  root.UI = { $, $$, h, escapeHtml, icon, isRtl, toast, dialog, confirmDialog, countUp, segmented, formatDuration, clock, bytes, kbdHtml, dayLabel, revealText };
+  root.UI = { $, $$, h, escapeHtml, icon, isRtl, toast, dialog, confirmDialog, countUp, segmented, formatDuration, clock, bytes, kbdHtml, shortcutText, dayLabel, revealText };
 })(typeof window !== 'undefined' ? window : globalThis);

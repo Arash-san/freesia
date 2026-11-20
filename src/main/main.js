@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, clipboard, nativeImage, shell, nativeTheme, screen, dialog, powerMonitor } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, clipboard, nativeImage, shell, nativeTheme, screen, dialog, powerMonitor, systemPreferences } = require('electron');
 const { createUpdateController } = require('./update-controller');
 const { createReleaseNotes } = require('./release-notes');
 const { autoUpdater } = require('electron-updater');
@@ -11,6 +11,9 @@ const { createCloudEngine, createGeminiEngine, EngineError, DEFAULT_CLOUD_SERVER
 const { createLocalEngine } = require('./local-engine');
 const { createKeyHelper, snapshotClipboard, restoreClipboard } = require('./keys');
 const { createAppScanner } = require('./apps');
+const { frontmostApp } = require('./mac-apps');
+
+const isMac = process.platform === 'darwin';
 
 // ============================================
 // One-time migration from the old "Dictaloom" install
@@ -135,7 +138,7 @@ const local = createLocalEngine({
   onStatus: (s) => sendToMain('local-status', s)
 });
 const engines = { cloud, local, gemini };
-const appScanner = createAppScanner({ app, shell, log: writeLog });
+const appScanner = createAppScanner({ app, shell, nativeImage, log: writeLog });
 let keys = null;
 
 function getStylesDir() {
@@ -181,7 +184,9 @@ function setupAutoUpdater() {
     debug: (m) => writeLog('DEBUG', 'autoUpdater', String(m))
   };
   updateController = createUpdateController({
-    updater: autoUpdater, publish: sendUpdateStatus, packaged: app.isPackaged,
+    // No macOS releases are published (and unsigned apps cannot self-update), so updates stay off there
+    updater: autoUpdater, publish: sendUpdateStatus, packaged: app.isPackaged && !isMac,
+    ...(isMac && app.isPackaged ? { disabledMessage: 'Freesia does not update itself on macOS. Download the newest disk image from the Releases page on GitHub.' } : {}),
     canInstall: () => !isRecording && !isProcessing,
     beforeInstall: () => { app.isQuitting = true; },
     installFailed: () => { app.isQuitting = false; },
@@ -206,7 +211,8 @@ function createMainWindow() {
     height: 780,
     minWidth: 820,
     minHeight: 600,
-    frame: false,
+    // macOS keeps its own traffic lights; the custom buttons are Windows-only
+    ...(isMac ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 14 } } : { frame: false }),
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#0b0b0d' : '#efeeea',
     show: false,
     icon: path.join(__dirname, '..', '..', 'assets', 'icon.png'),
@@ -267,7 +273,8 @@ function createOverlayWindow() {
   overlayWindow.loadFile(path.join(__dirname, '..', 'renderer', 'overlay.html'));
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
   overlayWindow.setAlwaysOnTop(true, 'screen-saver', 1);
-  overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // skipTransformProcessType keeps the macOS Dock icon from disappearing
+  overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
   overlayWindow.webContents.on('render-process-gone', (_, details) => {
     writeLog('ERROR', 'overlay:render-process-gone', details.reason);
     try { overlayWindow.destroy(); } catch { /* ignore */ }
@@ -334,7 +341,8 @@ function createTray() {
   let trayIcon;
   try {
     const trayPath = path.join(__dirname, '..', '..', 'assets', 'tray.png');
-    trayIcon = nativeImage.createFromPath(fs.existsSync(trayPath) ? trayPath : path.join(__dirname, '..', '..', 'assets', 'icon.png')).resize({ width: 16, height: 16, quality: 'best' });
+    const size = isMac ? 18 : 16;
+    trayIcon = nativeImage.createFromPath(fs.existsSync(trayPath) ? trayPath : path.join(__dirname, '..', '..', 'assets', 'icon.png')).resize({ width: size, height: size, quality: 'best' });
   } catch {
     trayIcon = nativeImage.createEmpty();
   }
@@ -348,6 +356,28 @@ function createTray() {
     { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } }
   ]));
   tray.on('click', () => showMainWindow());
+}
+
+// macOS keeps these for itself even when globalShortcut.register succeeds ("Ctrl" is Cmd here)
+const MAC_SYSTEM_SHORTCUTS = {
+  'Ctrl+Space': 'opens Spotlight',
+  'Alt+Ctrl+Space': 'opens Finder search',
+  'Control+Space': 'switches input source',
+  'Alt+Control+Space': 'switches input source',
+  'Control+Up': 'opens Mission Control',
+  'Control+Down': 'shows app windows',
+  'Control+Left': 'switches desktops',
+  'Control+Right': 'switches desktops',
+  'Ctrl+Tab': 'switches apps',
+  'Ctrl+Shift+3': 'takes a screenshot',
+  'Ctrl+Shift+4': 'takes a screenshot',
+  'Ctrl+Shift+5': 'takes a screenshot',
+};
+
+function macSystemUse(shortcut) {
+  const parts = String(shortcut || '').split('+');
+  const key = parts.pop();
+  return MAC_SYSTEM_SHORTCUTS[[...parts.sort(), key].join('+')] || null;
 }
 
 function toAccelerator(shortcut) {
@@ -442,11 +472,23 @@ function cancelDictation() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// macOS only lets Freesia press Cmd+V / Cmd+C in other apps after the user
+// allows it in System Settings → Privacy & Security → Accessibility.
+let askedForAccessibility = false;
+function canSendKeys() {
+  if (!isMac || systemPreferences.isTrustedAccessibilityClient(false)) return true;
+  writeLog('WARN', 'inject', 'Accessibility permission missing');
+  // Prompt once per launch; after that the toast explains where to allow it
+  if (!askedForAccessibility) systemPreferences.isTrustedAccessibilityClient(true);
+  askedForAccessibility = true;
+  return false;
+}
+
 async function captureSelection() {
   const snap = snapshotClipboard(clipboard);
   const sentinel = `⁣freesia-${Date.now()}`;
   clipboard.writeText(sentinel);
-  const ok = await keys.copy();
+  const ok = canSendKeys() && await keys.copy();
   let selection = '';
   if (ok) {
     for (let i = 0; i < 8; i++) {
@@ -461,6 +503,12 @@ async function captureSelection() {
 
 async function pasteSendKeysFallback() {
   const { execFile } = require('child_process');
+  if (isMac) {
+    return new Promise((resolve) => {
+      execFile('/usr/bin/osascript', ['-e', 'tell application "System Events" to keystroke "v" using command down'],
+        { timeout: 8000 }, (err) => resolve(!err));
+    });
+  }
   return new Promise((resolve) => {
     execFile('powershell.exe', ['-NoProfile', '-Command', "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^v')"],
       { windowsHide: true, timeout: 8000 }, (err) => resolve(!err));
@@ -472,6 +520,7 @@ async function injectText(text) {
   clipboard.writeText(text);
   // Let clipboard managers and remote-desktop clients sync before pasting
   await sleep(120);
+  if (!canSendKeys()) return false;
   let method = 'scan-code';
   let ok = await keys.paste();
   if (!ok) {
@@ -481,7 +530,7 @@ async function injectText(text) {
   }
   if (!ok) {
     // Leave the transcript in the clipboard so the user can paste it
-    writeLog('ERROR', 'inject', 'Paste failed; transcript left in clipboard for manual Ctrl+V');
+    writeLog('ERROR', 'inject', `Paste failed; transcript left in clipboard for manual ${isMac ? 'Cmd' : 'Ctrl'}+V`);
     return false;
   }
   writeLog('INFO', 'inject', `Pasted ${text.length} chars (${method})`);
@@ -511,6 +560,7 @@ ipcMain.handle('set-setting', (_, key, value) => {
 ipcMain.handle('get-setting', (_, key) => (PRIVATE_KEYS.has(String(key).split('.')[0]) ? undefined : store.get(key)));
 
 ipcMain.handle('get-foreground-app', async () => {
+  if (isMac) return frontmostApp();
   const { exec } = require('child_process');
   return new Promise((resolve) => {
     const psCmd = `(Get-Process | Where-Object { $_.MainWindowHandle -eq (Add-Type -MemberDefinition '[DllImport(\\"user32.dll\\")] public static extern IntPtr GetForegroundWindow();' -Name 'Win32' -Namespace Win32 -PassThru)::GetForegroundWindow() }).Name`;
@@ -574,8 +624,10 @@ ipcMain.handle('set-shortcut', (_, key, value) => {
   if (!result[key]) {
     store.set(key, previous);
     registerShortcuts();
-    return { ok: false, message: `${value} is already used by another app or Windows.` };
+    return { ok: false, message: `${value} is already used by another app or ${isMac ? 'macOS' : 'Windows'}.` };
   }
+  const use = isMac && macSystemUse(value);
+  if (use) return { ok: true, warning: `macOS also uses this combination: it ${use}. Turn that off in System Settings → Keyboard → Keyboard Shortcuts, or pick another one.` };
   return { ok: true };
 });
 // While the user records a new shortcut, the old ones must not fire
@@ -850,6 +902,10 @@ app.whenReady().then(() => {
   secrets.migrate();
   for (const name of ['gemini', 'cloud', 'localServer']) secrets.get(name);
   initLogger();
+  // Ask for the microphone up front so the first dictation is not lost to the macOS prompt
+  if (isMac && systemPreferences.getMediaAccessStatus('microphone') === 'not-determined') {
+    systemPreferences.askForMediaAccess('microphone').catch(() => {});
+  }
   writeLog('INFO', 'app', `Freesia ${app.getVersion()} starting (engine: ${store.get('engine')})`);
   keys = createKeyHelper({ dir: app.getPath('userData'), log: writeLog });
   keys.warm();
@@ -876,7 +932,10 @@ app.on('will-quit', () => {
 });
 
 app.on('window-all-closed', () => { /* stay in the tray */ });
-app.on('activate', () => { if (mainWindow === null) createMainWindow(); });
+// Cmd+Q and Quit from the Dock must get past the close-to-tray handler
+if (isMac) app.on('before-quit', () => { app.isQuitting = true; });
+// Clicking the Dock icon brings back the window hidden to the tray
+app.on('activate', () => { if (mainWindow === null || mainWindow.isDestroyed()) createMainWindow(); else showMainWindow(); });
 
 // Exposed for the end-to-end test harness (test/e2e.cjs)
 module.exports = { captureSelection, injectText, handleShortcut, engines };

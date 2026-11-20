@@ -1,7 +1,8 @@
 // Keep a downloaded installer usable while checking for a newer release.
 // Dependency injection lets the full lifecycle run in tests without installing.
 function createUpdateController({ updater, publish, packaged, beforeInstall, installFailed = () => {}, canInstall = () => true,
-  now = Date.now, timers = globalThis, fetchNotes = null }) {
+  now = Date.now, timers = globalThis, fetchNotes = null,
+  disabledMessage = 'Updates are enabled in installed builds.' }) {
   let state = { status: 'idle', message: 'Check for updates.' };
   let downloaded = null;
   let operation = null;
@@ -59,7 +60,7 @@ function createUpdateController({ updater, publish, packaged, beforeInstall, ins
   };
   updater.on('error', failed);
   async function check(force = false) {
-    if (!packaged) return emit('disabled', { message: 'Updates are enabled in installed builds.' });
+    if (!packaged) return emit('disabled', { message: disabledMessage });
     if (operation || state.status === 'installing') return state;
     if (!force && lastCheck && now() - lastCheck < 60000) return state;
     operation = 'check';
@@ -98,7 +99,7 @@ function createUpdateController({ updater, publish, packaged, beforeInstall, ins
     return state;
   }
   function start() {
-    if (!packaged) return emit('disabled', { message: 'Updates are enabled in installed builds.' });
+    if (!packaged) return emit('disabled', { message: disabledMessage });
     startup = timers.setTimeout(() => check(), 10000);
     interval = timers.setInterval(() => check(), 5 * 60 * 1000);
     startup?.unref?.(); interval?.unref?.();

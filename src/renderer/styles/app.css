@@ -61,6 +61,9 @@ body.is-recording .ambient-glow { opacity: calc(var(--glow) * 0.5); }
 }
 .win-btn:hover { background: var(--raise-2); color: var(--ink); }
 .win-btn.close:hover { background: #e81123; color: #fff; }
+/* macOS: native traffic lights sit top-left, so drop our buttons and clear them */
+.platform-darwin .win-controls { display: none; }
+.platform-darwin .sidebar { padding-top: 38px; }
 
 /* ---------- Screens ---------- */
 .screen { position: fixed; inset: 0; z-index: 1; display: none; }

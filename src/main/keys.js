@@ -1,6 +1,8 @@
 // Keyboard injection through ONE long-lived PowerShell helper.
 // 2.x started a fresh PowerShell and compiled C# for every paste (~1 s).
 // Hardware scan codes (not virtual keys) reach AnyDesk/RDP/Citrix sessions.
+// On macOS the helper is a JavaScript for Automation script that posts
+// Cmd+V / Cmd+C as CGEvents, which needs the Accessibility permission.
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -52,6 +54,47 @@ while ($true) {
 }
 `;
 
+const HELPER_JXA = `
+ObjC.import('Foundation');
+ObjC.import('ApplicationServices');
+function write(s) { $.NSFileHandle.fileHandleWithStandardOutput.writeData($(s + '\\n').dataUsingEncoding($.NSUTF8StringEncoding)); }
+// Wait until the user lets go of Cmd/Shift/Option/Control from the hotkey
+function waitForModifiers(ms) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    if ((Number($.CGEventSourceFlagsState(1)) & 0x1E0000) === 0) return;
+    delay(0.015);
+  }
+}
+// ANSI key codes: 9 is V, 8 is C
+function chord(key) {
+  if (!$.AXIsProcessTrusted()) return false;
+  waitForModifiers(1500);
+  for (const down of [true, false]) {
+    const e = $.CGEventCreateKeyboardEvent($(), key, down);
+    $.CGEventSetFlags(e, 0x100000);
+    $.CGEventPost(0, e);
+  }
+  return true;
+}
+write('ready');
+const input = $.NSFileHandle.fileHandleWithStandardInput;
+let buffer = '';
+for (;;) {
+  const data = input.availableData;
+  if (Number(data.length) === 0) break;
+  buffer += $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding).js;
+  let i;
+  while ((i = buffer.indexOf('\\n')) >= 0) {
+    const line = buffer.slice(0, i).trim();
+    buffer = buffer.slice(i + 1);
+    let ok = false;
+    try { ok = line === 'paste' ? chord(9) : line === 'copy' ? chord(8) : line === 'ping'; } catch (e) { ok = false; }
+    write(ok ? 'ok' : 'fail');
+  }
+}
+`;
+
 function createKeyHelper({ dir, log = () => {} }) {
   let child = null;
   let ready = null;
@@ -59,10 +102,13 @@ function createKeyHelper({ dir, log = () => {} }) {
   const waiters = [];
 
   function launch() {
-    const script = path.join(dir, 'freesia-keys.ps1');
-    fs.writeFileSync(script, HELPER_PS, 'utf-8');
-    child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
-      { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const mac = process.platform === 'darwin';
+    const script = path.join(dir, mac ? 'freesia-keys.js' : 'freesia-keys.ps1');
+    fs.writeFileSync(script, mac ? HELPER_JXA : HELPER_PS, 'utf-8');
+    child = mac
+      ? spawn('/usr/bin/osascript', ['-l', 'JavaScript', script], { stdio: ['pipe', 'pipe', 'pipe'] })
+      : spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
+        { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     ready = new Promise((resolve) => waiters.push({ resolve, timer: setTimeout(() => resolve('timeout'), 15000) }));
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (d) => {

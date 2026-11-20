@@ -4,7 +4,7 @@
 
 # Freesia
 
-Free, open source voice dictation for Windows. Speak freely. Write beautifully.
+Free, open source voice dictation for Windows and macOS, with an Android app. Speak freely. Write beautifully.
 
 <p>
   <a href="https://github.com/Arash-san/freesia/releases/latest">
@@ -16,6 +16,7 @@ Free, open source voice dictation for Windows. Speak freely. Write beautifully.
 </p>
 
 [![Release](https://github.com/Arash-san/freesia/actions/workflows/release.yml/badge.svg)](https://github.com/Arash-san/freesia/actions/workflows/release.yml)
+[![macOS](https://github.com/Arash-san/freesia/actions/workflows/macos.yml/badge.svg)](https://github.com/Arash-san/freesia/actions/workflows/macos.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 Freesia lives in your tray. Press a shortcut in any app, talk, press it again, and your words are typed where your cursor is. A style decides how the text reads: faithful, casual, a formal email, bullet points, or anything you describe yourself.
@@ -25,6 +26,12 @@ Freesia 3 no longer needs a paid API. It can transcribe with a self hosted serve
 ## Android
 
 Freesia for Android dictates into any app through an accessibility service: focus a text field, tap the floating bloom, speak, and the text lands at your cursor. Choose Freesia Cloud or Gemini in Settings → Speech engine → Configure. Gemini uses your Google AI Studio API key for transcription and formatting. The app keeps every recording until its text is delivered so a failed take can be retried, and updates itself from GitHub. Download `Freesia-Android-<version>.apk` from the newest [android release](https://github.com/Arash-san/freesia/releases?q=android&expanded=true). Details are in [android/README.md](android/README.md).
+
+## macOS
+
+Freesia also runs on macOS 11 or newer, on Apple silicon and Intel Macs. The default shortcuts are `⌘⇧Space` for dictation and `⌘⌥⇧Space` for command mode. On first use, macOS asks for two permissions. Allow **Microphone**. Then turn Freesia on under System Settings → Privacy & Security → **Accessibility**, so it can paste into other apps. Without Accessibility the text stays on your clipboard for `⌘V`. The on device engine uses llama.cpp: with Metal on Apple silicon, on the processor on Intel Macs. The disk images are ad-hoc signed and not notarized, so macOS blocks Freesia the first time you open it. On macOS 15 or newer, open System Settings → Privacy & Security and choose **Open Anyway**. On older versions, right-click the app and choose Open. Running `xattr -cr /Applications/Freesia.app` in Terminal works on all of them. Automatic updates are off on macOS, so install a newer disk image by hand. After each new version, turn Accessibility off and on again for Freesia, because macOS treats it as a new app.
+
+Every desktop release after 3.1.1 includes two disk images: `Freesia-<version>-mac-arm64.dmg` for Apple silicon and `Freesia-<version>-mac-x64.dmg` for Intel. Until that release is out, take them from the `freesia-macos` artifact of the newest [macOS workflow](https://github.com/Arash-san/freesia/actions/workflows/macos.yml) run on `main`, or build them on a Mac with `npm run package:mac`. The workflow builds both images for every desktop change, checks their signature, and starts the packaged app. A release is published only when that passes.
 
 ## Speech engines
 
@@ -40,7 +47,7 @@ If the chosen engine fails, Freesia tries the other engines you have set up. If 
 
 ### On this PC
 
-The on device engine downloads a 32 MB llama.cpp Vulkan build and the Qwen3-ASR weights into `%APPDATA%\freesia\engines`, checks every file against a pinned SHA-256, and starts a private server on `127.0.0.1` protected by a random key. It picks your strongest graphics card automatically and falls back to the CPU. The 1.7B model needs about 3.6 GB of GPU memory, so an RTX 4060 laptop runs it comfortably. The 0.6B model suits older laptops and CPU only machines.
+The on device engine downloads a llama.cpp build (32 MB with Vulkan on Windows, 11 MB on macOS) and the Qwen3-ASR weights into `%APPDATA%\freesia\engines` (`~/Library/Application Support/freesia/engines` on macOS), checks every file against a pinned SHA-256, and starts a private server on `127.0.0.1` protected by a random key. It picks your strongest graphics card automatically and falls back to the CPU. The 1.7B model needs about 3.6 GB of GPU memory, so an RTX 4060 laptop runs it comfortably. The 0.6B model suits older laptops and CPU only machines.
 
 ### Smart formatting
 
@@ -48,19 +55,19 @@ Styles, snippets, spelling cleanup, spoken emoji and polish are applied by a lan
 
 ## Features
 
-Dictation works in every Windows app, including remote desktop sessions, because Freesia pastes with hardware scan codes. Command mode edits the text you selected: select a paragraph, press `Ctrl+Shift+Alt+Space` and say "make this friendlier". A floating pill shows your live voice level, and Escape cancels. You can change both shortcuts in Settings.
+Dictation works in every Windows app, including remote desktop sessions, because Freesia pastes with hardware scan codes. On macOS it pastes with `⌘V` key events. Command mode edits the text you selected: select a paragraph, press `Ctrl+Shift+Alt+Space` (`⌘⌥⇧Space` on macOS) and say "make this friendlier". A floating pill shows your live voice level, and Escape cancels. You can change both shortcuts in Settings.
 
 Your personal dictionary is sent to the speech model as vocabulary hints, so names and jargon are spelled right. Snippets expand only when you clearly mean them. Styles can switch automatically by app, and you can write your own or let an AI agent write them (see [AGENTS.md](AGENTS.md)). History is searchable and stays on your PC, and the home screen shows words, time saved, streaks and the last thirty days of activity.
 
 ## Privacy
 
-Settings stay on your PC. The Gemini key and the Freesia Cloud token are encrypted with your Windows account through Electron `safeStorage` and never reach the interface process. The Freesia Voice server stores no audio and no transcripts.
+Settings stay on your PC. The Gemini key and the Freesia Cloud token are encrypted with your Windows account, or with the macOS Keychain, through Electron `safeStorage` and never reach the interface process. The Freesia Voice server stores no audio and no transcripts.
 
 Optional error reports contain the app version, the operating system, the engine name and the error text, plus an anonymous install ID. They never contain audio, transcripts, keys or tokens. New installs enable them by default with a visible switch on the first setup screen.
 
 ## Requirements
 
-Windows 10 or newer. For the on device engine, any GPU with Vulkan support and 4 GB of memory is ideal, and a CPU works too. Node.js 22 is only needed for development.
+Windows 10 or newer, or macOS 11 or newer. For the on device engine, any GPU with Vulkan support and 4 GB of memory is ideal, and a CPU works too. Node.js 22 is only needed for development.
 
 ## First run
 
@@ -91,6 +98,7 @@ npm start
 | `npm run shots` | Screenshots of every view in dark and light themes into `.tmp/shots` |
 | `node test/run-e2e.cjs` | End to end run on real speech (needs local test assets) |
 | `npm run package` | Build the Windows installer |
+| `npm run package:mac` | Build the macOS disk images (on a Mac) |
 
 ## Project layout
 
@@ -104,7 +112,7 @@ test/                Unit, native, screenshot and end to end tests
 
 ## Releases and updates
 
-Bump the version with `npm version`, then push the commit and tag with `git push origin main --follow-tags`. GitHub Actions builds the installer and publishes it with `latest.yml`, and installed copies of Freesia find it through `electron-updater`. Freesia checks at startup, every five minutes, after sleep and when you reopen it, and it only installs after you confirm.
+Bump the version with `npm version`, then push the commit and tag with `git push origin main --follow-tags`. GitHub Actions first builds and checks the macOS app, then builds the Windows installer and publishes it with `latest.yml`, and attaches the macOS disk images to the same release. Installed copies of Freesia on Windows find the update through `electron-updater`. Freesia checks at startup, every five minutes, after sleep and when you reopen it, and it only installs after you confirm.
 
 ## License
 
