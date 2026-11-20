@@ -2051,7 +2051,7 @@ async function beginShortcutRecording(button) {
         if (res.warning) toast(`Shortcut set to ${shortcutText(combo)}. ${res.warning}`, 'info', 8000);
         else toast(`Shortcut set to ${shortcutText(combo)}`, 'success');
       }
-      else toast(res?.message || 'That shortcut could not be used.', 'error', 5000);
+      else toast((res?.message || 'That shortcut could not be used.').replace(combo, shortcutText(combo)), 'error', 5000);
     } else {
       await api.registerShortcuts();
     }
@@ -2157,7 +2157,7 @@ function renderUpdateStatus(state = {}) {
   const busy = ['checking', 'downloading', 'installing'].includes(status);
   const pct = Math.max(0, Math.min(100, Math.round(state.progress?.percent || 0)));
   const txt = $('updateStatusText'); if (txt) txt.textContent = state.message || 'Update checks are ready.';
-  const check = $('btnCheckUpdates'); if (check) check.disabled = busy;
+  const check = $('btnCheckUpdates'); if (check) check.disabled = busy || status === 'disabled';
   const dl = $('btnDownloadUpdate'); if (dl) dl.hidden = status !== 'available';
   const inst = $('btnInstallUpdate'); if (inst) inst.hidden = status !== 'downloaded';
   const prog = $('updateProgress');

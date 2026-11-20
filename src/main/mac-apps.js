@@ -30,7 +30,7 @@ function jxa(script, timeout = 4000) {
 
 const FRONTMOST = `ObjC.import('AppKit');
 const a = $.NSWorkspace.sharedWorkspace.frontmostApplication;
-a.isNil() ? '' : (a.bundleURL.isNil() ? a.localizedName.js : a.bundleURL.path.js)`;
+a.isNil() ? '' : (a.bundleURL.isNil() ? (a.localizedName.isNil() ? '' : a.localizedName.js) : a.bundleURL.path.js)`;
 
 // Regular (Dock) apps only: path|name per line
 const RUNNING = `ObjC.import('AppKit');
@@ -45,8 +45,10 @@ async function frontmostApp() {
 async function runningApps() {
   const out = await jxa(RUNNING, 6000);
   return out.split(/\r?\n/).filter(Boolean).map((line) => {
-    const [bundle, name] = line.split('|');
-    return { bundle, name: (name || '').trim() || path.basename(bundle, '.app') };
+    // Only the first bar separates: an app name may contain one
+    const i = line.indexOf('|');
+    const [bundle, name] = i < 0 ? [line, ''] : [line.slice(0, i), line.slice(i + 1)];
+    return { bundle, name: name.trim() || path.basename(bundle, '.app') };
   });
 }
 
